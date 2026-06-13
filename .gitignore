@@ -34,3 +34,4 @@ Thumbs.db
 *.pptx
 backend/package.json
 backend/package-lock.json
+backend/__pycache__/
