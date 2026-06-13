@@ -3,7 +3,7 @@
     <div class="card mb-4">
       <h3 class="text-sm font-semibold text-gray-700 mb-3">🔬 视觉模型独立测试</h3>
       <p class="text-xs text-gray-500 mb-3">
-        上传一张效果图 → 选择模型 → 直接调用视觉模型 → 查看各步骤耗时 + 原始响应。
+        上传一张或多张效果图 → 选择模型 → 批量测试 → 查看各步骤耗时 + 原始响应。
         不经过数据库、不经过融合流程，纯诊断用途，方便对比不同模型效果。
       </p>
 
@@ -19,153 +19,209 @@
         <span v-else class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">仅测试用</span>
       </div>
 
-      <!-- 上传 -->
-      <div class="flex items-center gap-4 mb-4">
+      <!-- 上传区域 -->
+      <div class="mb-4">
         <label class="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 text-sm font-medium">
-          📁 选择图片
-          <input type="file" accept="image/jpeg,image/png,image/webp" @change="onFileChange" class="hidden" />
+          📁 选择图片（可多选）
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onFilesChange" class="hidden" />
         </label>
-        <span v-if="file" class="text-sm text-gray-600">{{ file.name }}</span>
+        <span class="text-xs text-gray-400 ml-3">支持多选，按顺序逐个测试</span>
+      </div>
+
+      <!-- 图片预览区 -->
+      <div v-if="files.length > 0" class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-medium text-gray-600">已选 {{ files.length }} 张图片</span>
+          <button class="text-xs text-red-500 hover:text-red-700" @click="clearAll">清空全部</button>
+        </div>
+        <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+          <div v-for="(f, i) in files" :key="f.name + i"
+               class="relative group border rounded-lg overflow-hidden cursor-pointer"
+               :class="{'ring-2 ring-primary-500': previewIndex === i, 'border-gray-200': previewIndex !== i, 'opacity-50': f.done || f.failed}"
+               @click="previewIndex = i">
+            <img :src="f.url" class="w-full h-20 object-cover" />
+            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent px-1 py-0.5">
+              <span class="text-[9px] text-white truncate block">{{ f.name }}</span>
+            </div>
+            <!-- 状态标记 -->
+            <div v-if="f.done" class="absolute top-1 right-1 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+              <svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <div v-if="f.failed" class="absolute top-1 right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+              <span class="text-[9px] text-white">!</span>
+            </div>
+            <div v-if="f.testing" class="absolute inset-0 bg-black/30 flex items-center justify-center">
+              <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 大图预览 -->
+      <div v-if="files.length > 0" class="card mb-4 p-0 overflow-hidden">
+        <img :src="files[previewIndex]?.url" class="w-full max-h-64 object-contain bg-gray-100" />
+        <div class="p-2 flex items-center justify-between bg-gray-50 border-t border-gray-200">
+          <span class="text-xs text-gray-500 truncate">{{ files[previewIndex]?.name }}</span>
+          <div class="flex items-center gap-2">
+            <button v-if="previewIndex > 0" class="text-xs text-primary-600 hover:text-primary-800" @click="previewIndex--">◀ 上一张</button>
+            <span class="text-[10px] text-gray-400">{{ previewIndex + 1 }}/{{ files.length }}</span>
+            <button v-if="previewIndex < files.length - 1" class="text-xs text-primary-600 hover:text-primary-800" @click="previewIndex++">下一张 ▶</button>
+          </div>
+        </div>
       </div>
 
       <!-- 按钮 -->
       <div class="flex items-center gap-3 mb-4">
-        <button class="btn-primary" :disabled="!file || testing" @click="startTest">
+        <button class="btn-primary" :disabled="files.length === 0 || testing" @click="startBatchTest">
           <svg v-if="testing" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          {{ testing ? '测试中...' : '🚀 开始测试' }}
+          {{ testing ? `测试中 ${doneCount}/${files.length}...` : '🚀 批量测试' }}
         </button>
-        <span v-if="testing" class="text-xs text-primary-600 animate-pulse">⏱ 正在调用模型...</span>
+        <span v-if="testing" class="text-xs text-primary-600 animate-pulse">{{ statusText }}</span>
       </div>
 
-      <!-- 进度指示器 -->
-      <div v-if="testing" class="mb-4">
-        <div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full bg-primary-400 animate-pulse"></div>
-          <span class="text-xs text-gray-500">预处理 → 模型推理({{ selectedModel }}) → 解析中...</span>
+      <!-- 进度条 -->
+      <div v-if="testing && files.length > 1" class="mb-4">
+        <div class="w-full bg-gray-200 rounded-full h-2">
+          <div class="bg-primary-500 h-2 rounded-full transition-all duration-300" :style="{width: (doneCount/files.length*100)+'%'}"></div>
         </div>
+        <div class="text-[10px] text-gray-400 mt-1 text-right">{{ doneCount }}/{{ files.length }} 完成</div>
       </div>
     </div>
 
-    <!-- 结果 -->
-    <div v-if="result" class="space-y-3">
-      <!-- 计时信息 -->
+    <!-- 汇总结果 -->
+    <div v-if="results.length > 0" class="space-y-3">
+      <!-- 汇总表 -->
       <div class="card">
-        <h4 class="text-xs font-semibold text-gray-600 mb-2">⏱ 耗时（{{ result.model_used }}）</h4>
-        <div class="grid grid-cols-3 gap-3 text-center">
-          <div class="p-2 bg-gray-50 rounded">
-            <div class="text-lg font-bold" :class="timingColor(result.timings.preprocess)">{{ result.timings.preprocess }}s</div>
-            <div class="text-[10px] text-gray-400">预处理</div>
-          </div>
-          <div class="p-2 bg-gray-50 rounded">
-            <div class="text-lg font-bold" :class="timingColor(result.timings.inference)">{{ result.timings.inference }}s</div>
-            <div class="text-[10px] text-gray-400">模型推理</div>
-          </div>
-          <div class="p-2 bg-gray-50 rounded">
-            <div class="text-lg font-bold" :class="timingColor(result.timings.total)">{{ result.timings.total }}s</div>
-            <div class="text-[10px] text-gray-400">总耗时</div>
-          </div>
+        <h4 class="text-xs font-semibold text-gray-600 mb-2">📊 测试汇总（{{ selectedModel }}）</h4>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="bg-gray-50">
+                <th class="text-left py-1.5 px-2 font-medium text-gray-500">图片</th>
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">耗时</th>
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">空间</th>
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">墙面</th>
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">地面</th>
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">顶面</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(r, i) in results" :key="i" class="border-t border-gray-100"
+                  :class="{'bg-red-50': !r.success}">
+                <td class="py-1.5 px-2 text-gray-700 truncate max-w-[120px]">{{ r.filename }}</td>
+                <td class="py-1.5 px-2 text-center" :class="timingColor(r.total)">{{ r.total }}s</td>
+                <td class="py-1.5 px-2 text-center">{{ r.space || '-' }}</td>
+                <td class="py-1.5 px-2 text-center">{{ r.wall || '-' }}</td>
+                <td class="py-1.5 px-2 text-center">{{ r.floor || '-' }}</td>
+                <td class="py-1.5 px-2 text-center">{{ r.ceiling || '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <!-- 图片信息 -->
-      <div class="card">
-        <h4 class="text-xs font-semibold text-gray-600 mb-2">🖼️ 图片信息</h4>
-        <div class="text-xs text-gray-600 space-y-1">
-          <p>文件名: {{ result.image_info.filename }}</p>
-          <p>原图: {{ result.image_info.original_size_kb }} KB → 压缩后: {{ result.image_info.processed_size_kb }} KB</p>
-          <p>模型: <span class="font-mono bg-gray-100 px-1.5 py-0.5 rounded">{{ result.model_used }}</span></p>
+      <!-- 各图详情（折叠） -->
+      <div v-for="(r, i) in results" :key="'detail-'+i" class="card">
+        <div class="flex items-center justify-between cursor-pointer" @click="r.expanded = !r.expanded">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-gray-700">{{ i+1 }}. {{ r.filename }}</span>
+            <span class="text-[10px]" :class="r.success ? 'text-green-600' : 'text-red-600'">
+              {{ r.success ? `${r.total}s` : '失败' }}
+            </span>
+          </div>
+          <svg class="w-3 h-3 text-gray-400 transition-transform" :class="{'rotate-180': r.expanded}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
         </div>
-      </div>
 
-      <!-- 识别结果 -->
-      <div class="card">
-        <h4 class="text-xs font-semibold text-gray-600 mb-2">🎯 识别结果</h4>
-        <div v-if="result.raw_result" class="space-y-2">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div class="p-2 bg-gray-50 rounded">
-              <div class="text-[10px] text-gray-400">空间</div>
-              <div class="text-sm font-medium">{{ result.raw_result.structured?.space_type || result.raw_result.spaces?.[0]?.type || '-' }}</div>
+        <div v-if="r.expanded" class="mt-3 space-y-2 border-t border-gray-100 pt-3">
+          <!-- 缩略图 -->
+          <img :src="r.fileUrl" class="w-full max-h-32 object-contain bg-gray-50 rounded" />
+
+          <!-- 计时 -->
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-sm font-bold" :class="timingColor(r.timings?.preprocess || 0)">{{ (r.timings?.preprocess || 0) }}s</div>
+              <div class="text-[9px] text-gray-400">预处理</div>
             </div>
-            <div class="p-2 bg-gray-50 rounded">
-              <div class="text-[10px] text-gray-400">墙面</div>
-              <div class="text-sm font-medium">{{ result.raw_result.structured?.wall_material || '-' }}</div>
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-sm font-bold" :class="timingColor(r.timings?.inference || 0)">{{ (r.timings?.inference || 0) }}s</div>
+              <div class="text-[9px] text-gray-400">推理</div>
             </div>
-            <div class="p-2 bg-gray-50 rounded">
-              <div class="text-[10px] text-gray-400">地面</div>
-              <div class="text-sm font-medium">{{ result.raw_result.structured?.floor_material || '-' }}</div>
-            </div>
-            <div class="p-2 bg-gray-50 rounded">
-              <div class="text-[10px] text-gray-400">顶面</div>
-              <div class="text-sm font-medium">{{ result.raw_result.structured?.ceiling_material || '-' }}</div>
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-sm font-bold" :class="timingColor(r.total)">{{ r.total }}s</div>
+              <div class="text-[9px] text-gray-400">总耗时</div>
             </div>
           </div>
-          <div v-if="result.raw_result.success === false" class="mt-2 p-2 bg-red-50 rounded text-xs text-red-600">
-            ⚠️ 识别失败: {{ result.raw_result.error || '未知错误' }}
-          </div>
-        </div>
-      </div>
 
-      <!-- 原始模型响应 -->
-      <div class="card">
-        <div class="flex items-center justify-between mb-2">
-          <h4 class="text-xs font-semibold text-gray-600">📄 原始模型响应</h4>
-          <button class="text-xs text-primary-600 hover:text-primary-800" @click="showRaw = !showRaw">
-            {{ showRaw ? '收起' : '展开' }}
+          <!-- 识别结果 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-1.5">
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-[9px] text-gray-400">空间</div>
+              <div class="text-xs font-medium">{{ r.space || '-' }}</div>
+            </div>
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-[9px] text-gray-400">墙面</div>
+              <div class="text-xs font-medium">{{ r.wall || '-' }}</div>
+            </div>
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-[9px] text-gray-400">地面</div>
+              <div class="text-xs font-medium">{{ r.floor || '-' }}</div>
+            </div>
+            <div class="p-1.5 bg-gray-50 rounded">
+              <div class="text-[9px] text-gray-400">顶面</div>
+              <div class="text-xs font-medium">{{ r.ceiling || '-' }}</div>
+            </div>
+          </div>
+
+          <!-- 原始响应 -->
+          <button class="text-[10px] text-primary-600 hover:text-primary-800" @click.stop="r.showRaw = !r.showRaw">
+            {{ r.showRaw ? '收起原始响应' : '展开原始响应' }}
           </button>
+          <pre v-if="r.showRaw" class="text-[10px] bg-gray-900 text-green-300 p-2 rounded overflow-x-auto max-h-40 overflow-y-auto">{{ JSON.stringify(r.rawData, null, 2) }}</pre>
         </div>
-        <pre v-if="showRaw" class="text-xs bg-gray-900 text-green-300 p-3 rounded overflow-x-auto max-h-80 overflow-y-auto">{{ JSON.stringify(result.raw_result, null, 2) }}</pre>
       </div>
 
       <!-- 多模型对比提示 -->
       <div class="card border-l-4 border-primary-400 bg-primary-50/30">
         <p class="text-xs text-primary-700">
-          💡 换一个模型试试？下拉选其他模型 → 重新点「开始测试」，对比不同模型的耗时和识别效果。
+          💡 换一个模型试试？下拉选其他模型 → 重新点「批量测试」，对比不同模型的耗时和识别效果。
         </p>
-      </div>
-
-      <!-- 故障诊断 -->
-      <div v-if="result.timings.total > 5" class="card border-l-4 border-yellow-400">
-        <h4 class="text-xs font-semibold text-yellow-700 mb-1">⚠️ 诊断提示</h4>
-        <ul class="text-xs text-yellow-600 space-y-1 list-disc list-inside">
-          <li v-if="result.timings.preprocess > 2">预处理耗时过长（>2s），图片可能过大</li>
-          <li v-if="result.timings.inference > 10">模型推理耗时过长（>10s），检查 Ollama 服务状态</li>
-          <li v-if="result.timings.total > 20">总耗时超过20s，建议检查网络/模型负载</li>
-        </ul>
-      </div>
-      <div v-if="!result.raw_result?.success" class="card border-l-4 border-red-400">
-        <h4 class="text-xs font-semibold text-red-700 mb-1">❌ 识别失败 - 可能原因</h4>
-        <ul class="text-xs text-red-600 space-y-1 list-disc list-inside">
-          <li>Ollama 服务未运行 → 终端执行 <code class="bg-red-100 px-1 rounded">ollama serve</code></li>
-          <li>模型未安装 → 终端执行 <code class="bg-red-100 px-1 rounded">ollama pull {{ selectedModel }}</code></li>
-          <li>Ollama 端口非 11434 → 检查 <code class="bg-red-100 px-1 rounded">curl localhost:11434</code></li>
-          <li>图片格式/大小异常</li>
-        </ul>
       </div>
     </div>
 
     <!-- 空状态 -->
-    <div v-if="!file && !result" class="card text-center text-gray-400 py-8">
+    <div v-if="files.length === 0 && results.length === 0" class="card text-center text-gray-400 py-8">
       <p class="text-4xl mb-3">🧪</p>
-      <p class="text-sm">选择一张效果图和一个模型，测试视觉识别效果</p>
+      <p class="text-sm">选择一张或多张效果图，测试视觉模型识别效果</p>
       <p class="text-xs mt-2">不写数据库、不走融合流程、纯模型诊断 + 对比</p>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import API from '../services/api.js'
 
-const file = ref(null)
+const files = ref([])
 const testing = ref(false)
-const result = ref(null)
-const showRaw = ref(false)
+const results = ref([])
+const previewIndex = ref(0)
 const selectedModel = ref('qwen2.5:7b')
 const activeModel = ref('')
 const availableModels = ref([])
+const doneCount = ref(0)
+
+const statusText = computed(() => {
+  if (!testing.value) return ''
+  const done = doneCount.value
+  const total = files.value.length
+  const current = files.value.find(f => f.testing)
+  return `第 ${done + 1}/${total} 张: ${current?.name || '...'}`
+})
 
 onMounted(async () => {
   const res = await API.get('/settings/vl_model')
@@ -176,10 +232,28 @@ onMounted(async () => {
   }
 })
 
-function onFileChange(e) {
-  file.value = e.target.files[0] || null
-  result.value = null
-  showRaw.value = false
+function onFilesChange(e) {
+  const newFiles = Array.from(e.target.files || [])
+  for (const f of newFiles) {
+    files.value.push({
+      file: f,
+      name: f.name,
+      url: URL.createObjectURL(f),
+      done: false,
+      failed: false,
+      testing: false,
+    })
+  }
+  previewIndex.value = 0
+  results.value = []
+  e.target.value = ''
+}
+
+function clearAll() {
+  files.value.forEach(f => URL.revokeObjectURL(f.url))
+  files.value = []
+  results.value = []
+  previewIndex.value = 0
 }
 
 function timingColor(sec) {
@@ -188,26 +262,64 @@ function timingColor(sec) {
   return 'text-red-600'
 }
 
-async function startTest() {
-  if (!file.value) return
+async function startBatchTest() {
+  if (files.value.length === 0) return
   testing.value = true
-  result.value = null
-  showRaw.value = false
+  results.value = []
+  doneCount.value = 0
 
-  const fd = new FormData()
-  fd.append('image_file', file.value)
-  fd.append('model', selectedModel.value)
-  const res = await API.post('/vision_test', fd)
-  if (res.success && res.data) {
-    result.value = res.data
-  } else {
-    result.value = {
-      timings: { preprocess: 0, inference: 0, total: 0 },
-      model_used: selectedModel.value,
-      image_info: { filename: file.value.name, original_size_kb: 0, processed_size_kb: 0 },
-      raw_result: { success: false, error: res.message || '请求失败' },
+  for (const f of files.value) {
+    f.done = false
+    f.failed = false
+    f.testing = true
+    f.showRaw = false
+    f.expanded = false
+
+    const fd = new FormData()
+    fd.append('image_file', f.file)
+    fd.append('model', selectedModel.value)
+    const res = await API.post('/vision_test', fd)
+
+    const entry = {
+      filename: f.name,
+      fileUrl: f.url,
+      success: false,
+      total: 0,
+      timings: { preprocess: 0, inference: 0 },
+      space: '-',
+      wall: '-',
+      floor: '-',
+      ceiling: '-',
+      rawData: null,
+      expanded: false,
+      showRaw: false,
     }
+
+    if (res.success && res.data) {
+      const d = res.data
+      entry.success = d.raw_result?.success !== false
+      entry.total = d.timings?.total || 0
+      entry.timings = d.timings || { preprocess: 0, inference: 0 }
+      entry.rawData = d.raw_result
+      const sr = d.raw_result?.structured
+      if (sr) {
+        entry.space = sr.space_type || '-'
+        entry.wall = sr.wall_material || '-'
+        entry.floor = sr.floor_material || '-'
+        entry.ceiling = sr.ceiling_material || '-'
+      }
+      entry.success = !!sr
+    } else {
+      entry.rawData = { error: res.message || '请求失败' }
+    }
+
+    results.value.push(entry)
+    f.done = entry.success
+    f.failed = !entry.success
+    f.testing = false
+    doneCount.value++
   }
+
   testing.value = false
 }
 </script>
