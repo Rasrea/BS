@@ -1,4 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Env
+.env
+*.env.local
+
+# Uploads & data (large files)
+backend/uploads/
+backend/file/
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.pptx
 backend/package.json
 backend/package-lock.json
-backend/node_modules/
-*.pptx
