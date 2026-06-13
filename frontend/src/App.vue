@@ -236,6 +236,11 @@
       <div v-show="activeTab === 'logs'">
         <LogViewer />
       </div>
+
+      <!-- Tab 7: 识别测试 -->
+      <div v-show="activeTab === 'vision_test'">
+        <VisionTestPanel />
+      </div>
     </main>
 
     <!-- Footer -->
@@ -262,6 +267,7 @@ import LogViewer from './components/LogViewer.vue'
 import ProcessPanel from './components/ProcessPanel.vue'
 import ProcessSpaceMap from './components/ProcessSpaceMap.vue'
 import SurfaceBreakdown from './components/SurfaceBreakdown.vue'
+import VisionTestPanel from './components/VisionTestPanel.vue'
 
 const tabs = [
   { key: 'home', label: '🏠 首页' },
@@ -271,6 +277,7 @@ const tabs = [
   { key: 'settings', label: '⚙️ 定价配置' },
   { key: 'processes', label: '🔧 施工工序' },
   { key: 'logs', label: '📝 操作日志' },
+  { key: 'vision_test', label: '🔬 识别测试' },
 ]
 
 const activeTab = ref('home')

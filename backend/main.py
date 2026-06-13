@@ -486,6 +486,71 @@ async def analyze_image(
     return ok(result, task_status=STATE_IDLE, trace_id=tid)
 
 
+# ─────────────────── 接口：视觉识别独立测试（诊断用） ───────────────────
+
+@app.post("/api/vision_test")
+async def vision_test(
+    image_file: UploadFile = File(None),
+):
+    """
+    独立视觉模型测试接口（诊断用）
+    - 无状态机锁，无数据库写，无30s超时
+    - 返回各步骤耗时 + 原始模型响应
+    """
+    if not image_file:
+        return err(400, "请上传图片（jpg/png/webp）")
+
+    content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "图片")
+    task_id = uuid.uuid4().hex[:8]
+    save_path = UPLOAD_DIR / f"{task_id}_test{ext}"
+    save_path.write_bytes(content)
+
+    t_total = time.time()
+    timings = {}
+
+    # 步骤1：图像预处理
+    t0 = time.time()
+    from image_preprocessor import preprocess_image, preprocess_image_stats
+    processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
+    stats = preprocess_image_stats(str(save_path), processed_path)
+    timings["preprocess"] = round(time.time() - t0, 3)
+
+    # 步骤2：模型推理（直接调用 recognise）
+    t0 = time.time()
+    from image_recognizer import recognize_with_fallback
+    settings = await db.get_settings()
+    vl_model = settings.get("active_vl_model", "qwen2.5:7b")
+    data = recognize_with_fallback(processed_path, vl_model)
+    timings["inference"] = round(time.time() - t0, 3)
+
+    # 步骤3：解析耗时
+    t_total = round(time.time() - t_total, 3)
+
+    # 清理临时文件
+    try:
+        os.remove(save_path)
+        os.remove(processed_path)
+    except Exception:
+        pass
+
+    result = {
+        "timings": {
+            "preprocess": timings["preprocess"],
+            "inference": timings["inference"],
+            "total": t_total,
+        },
+        "model_used": vl_model,
+        "image_info": {
+            "filename": image_file.filename,
+            "original_size_kb": round(stats["original_size_kb"], 1),
+            "processed_size_kb": round(stats["processed_size_kb"], 1),
+        },
+        "raw_result": data,
+    }
+
+    return ok(result)
+
+
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
     """PDF施工图识别：PDF→图片→复用LLaVA识别"""
