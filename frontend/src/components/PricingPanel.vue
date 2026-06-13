@@ -29,29 +29,7 @@
       </div>
     </div>
 
-    <!-- ====== 视觉模型 ====== -->
-    <div>
-      <h3 class="text-base font-semibold text-gray-800 mb-3 flex items-center gap-2">
-        <span>🧠</span> 视觉模型
-      </h3>
-      <div class="card">
-        <div v-if="vlLoading" class="text-sm text-gray-400">加载中...</div>
-        <div v-else class="flex items-center gap-4 flex-wrap">
-          <span class="text-sm text-gray-600">当前模型:</span>
-          <span class="text-sm font-semibold text-primary-700 bg-primary-50 px-3 py-1 rounded-lg">{{ activeModel }}</span>
-          <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
-            <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
-              {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
-            </option>
-          </select>
-          <button class="btn-primary text-xs" :disabled="!selectedModel || selectedModel === activeModel || vlSaving"
-                  @click="switchModel">
-            {{ vlSaving ? '切换中...' : '切换模型' }}
-          </button>
-          <span v-if="vlMsg" class="text-xs" :class="vlMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ vlMsg }}</span>
-        </div>
-      </div>
-    </div>
+    <!-- ====== 视觉模型（已移至首页分析区） ====== -->
 
     <!-- ====== 费率配置（分组） ====== -->
     <div>

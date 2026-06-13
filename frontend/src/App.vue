@@ -57,7 +57,27 @@
                  class="w-full max-w-xs border border-gray-300 rounded-lg px-3 py-2 text-sm" />
         </div>
 
-        <!-- 上传选择 -->
+        <!-- 视觉模型选择 -->
+        <div class="card mb-4">
+          <div class="flex items-center gap-4 flex-wrap">
+            <span class="text-xs text-gray-500">🧠 视觉模型:</span>
+            <span class="text-xs font-semibold text-primary-700 bg-primary-50 px-2 py-1 rounded">{{ activeModel }}</span>
+            <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
+              <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
+                {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
+              </option>
+            </select>
+            <button class="text-xs px-2 py-1 rounded font-medium"
+              :class="selectedModel && selectedModel !== activeModel ? 'bg-primary-600 text-white hover:bg-primary-700' : 'bg-gray-100 text-gray-400 cursor-not-allowed'"
+              :disabled="!selectedModel || selectedModel === activeModel || vlSaving"
+              @click="switchModel">
+              {{ vlSaving ? '切换中...' : '切换' }}
+            </button>
+            <span v-if="vlMsg" class="text-xs" :class="vlMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ vlMsg }}</span>
+          </div>
+        </div>
+
+        <!-- 上传模式选择 -->
         <div class="flex items-center gap-2 mb-3">
           <button @click="uploadMode='single'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
             :class="uploadMode==='single' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
@@ -222,9 +242,46 @@ const imageResult = ref(null)
 const sysStatus = ref(null)
 const historyRef = ref(null)
 
+// 视觉模型
+const vlSaving = ref(false)
+const activeModel = ref('')
+const selectedModel = ref('')
+const availableModels = ref([])
+const vlMsg = ref('')
+const vlMsgType = ref('success')
+
 onMounted(async () => {
   sysStatus.value = (await API.getStatus()).data || null
+  await loadVlModels()
 })
+
+async function loadVlModels() {
+  const res = await API.get('/settings/vl_model')
+  if (res.success && res.data) {
+    activeModel.value = res.data.active_model
+    selectedModel.value = res.data.active_model
+    availableModels.value = res.data.available_models || []
+  }
+}
+
+async function switchModel() {
+  if (!selectedModel.value || selectedModel.value === activeModel.value) return
+  vlSaving.value = true
+  vlMsg.value = ''
+  const fd = new FormData()
+  fd.append('model', selectedModel.value)
+  const res = await API.post('/settings/vl_model', fd)
+  if (res.success) {
+    activeModel.value = res.data.active_model
+    vlMsg.value = `已切换至 ${res.data.active_model}`
+    vlMsgType.value = 'success'
+  } else {
+    vlMsg.value = res.message || '切换失败'
+    vlMsgType.value = 'error'
+  }
+  setTimeout(() => vlMsg.value = '', 3000)
+  vlSaving.value = false
+}
 
 const statusClass = computed(() => {
   if (!sysStatus.value) return 'bg-gray-100 text-gray-600'
@@ -264,14 +321,13 @@ async function startAnalysis() {
   loading.value = true
 
   if (cadFile.value) {
-    // CAD解析
     analysisType.value = 'cad'
     cadResult.value = null
     cadResult.value = await API.analyzeCad(cadFile.value, projectName.value)
-    // 成功后刷新状态
     sysStatus.value = (await API.getStatus()).data || sysStatus.value
-  } else if (imageFile.value) {
-    // 效果图识别
+  }
+
+  if (imageFile.value) {
     analysisType.value = 'ai'
     imageResult.value = null
     imageResult.value = await API.analyzeImage(imageFile.value)
