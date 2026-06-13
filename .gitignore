@@ -1,40 +1,4 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-*.egg
-
-# Node
-node_modules/
-frontend/node_modules/
-
-# Environment
-.env
-.env.local
-*.log
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# Data
-backend/uploads/*
-backend/file/*
-backend/data/*.db
-backend/data/*.db-wal
-backend/data/*.db-shm
-
-# Exports
-/home/sd317/exports/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build
-frontend/dist/
-
-# 基准测试报告（自动生成，不入库）
-docs/03-规范/benchmark_reports/
+backend/package.json
+backend/package-lock.json
+backend/node_modules/
+*.pptx
