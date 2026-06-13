@@ -66,6 +66,13 @@ else
     echo "     安装后执行: ollama pull qwen2.5:7b"
 fi
 
+# ── 3.5 CPU笔记本提示 ──
+echo ""
+echo "  💡 CPU笔记本提示：qwen2.5:7b 在CPU上推理较慢（约30-60秒/张）"
+echo "     如果超时，可安装轻量模型 moondream（1.8B，CPU快3-5倍）："
+echo "       ollama pull moondream"
+echo "     然后在系统首页模型下拉选择 moondream 即可"
+
 # ── 4. 启动服务 ──
 echo ""
 echo "[4/4] 启动后端服务..."
