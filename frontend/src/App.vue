@@ -50,6 +50,26 @@
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <!-- Tab 1: 首页 - 上传与解析 -->
       <div v-show="activeTab === 'home'">
+        <!-- 流水步骤条 -->
+        <div class="card mb-4">
+          <div class="flex items-center justify-between">
+            <div v-for="(step, i) in flowSteps" :key="i"
+                 class="flex items-center gap-2"
+                 :class="i < flowSteps.length - 1 ? 'flex-1' : ''">
+              <div class="flex items-center gap-2">
+                <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+                     :class="step.done ? 'bg-green-500 text-white' : step.active ? 'bg-primary-600 text-white ring-2 ring-primary-300' : 'bg-gray-200 text-gray-500'">
+                  {{ step.done ? '✓' : step.num }}
+                </div>
+                <span class="text-xs font-medium" :class="step.done ? 'text-green-600' : step.active ? 'text-primary-700' : 'text-gray-400'">
+                  {{ step.label }}
+                </span>
+              </div>
+              <div v-if="i < flowSteps.length - 1" class="flex-1 h-px mx-2"
+                   :class="flowSteps[i+1].done ? 'bg-green-400' : 'bg-gray-300'"></div>
+            </div>
+          </div>
+        </div>
         <!-- 项目名称 -->
         <div class="card mb-4">
           <label class="text-xs text-gray-500 block mb-1">项目名称</label>
@@ -95,18 +115,41 @@
 
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <CadUploader @file-change="onCadFileChange" />
-          <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
-          <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
-          <div v-else-if="uploadMode==='pdf'" class="card">
-            <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
-            <input type="file" accept=".pdf" @change="onPdfFileChange"
-                   class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
-            <p v-if="pdfFile" class="text-xs text-green-600 mt-2">✅ {{ pdfFile.name }}</p>
-            <button v-if="pdfFile && !pdfLoading" class="btn-primary text-xs mt-3" @click="startPdfAnalysis">
-              🚀 识别PDF
-            </button>
-            <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
+          <div>
+            <CadUploader @file-change="onCadFileChange" />
+            <!-- CAD预览 -->
+            <div v-if="cadPreviewUrl && uploadMode==='single'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
+              <p class="text-xs text-gray-500 mb-1">📐 CAD文件: {{ cadFile?.name }}</p>
+              <div v-if="cadSpaces.length > 0" class="grid grid-cols-3 gap-1 max-h-32 overflow-y-auto">
+                <div v-for="s in cadSpaces.slice(0, 15)" :key="s.name"
+                     class="text-[10px] bg-white rounded px-1.5 py-1 border border-gray-100">
+                  <span class="font-medium text-gray-700">{{ s.name }}</span>
+                  <span class="text-gray-400 ml-1">{{ s.area_sqm?.toFixed(1) }}㎡</span>
+                </div>
+                <div v-if="cadSpaces.length > 15" class="text-[10px] text-primary-600 rounded px-1.5 py-1 bg-primary-50">
+                  +{{ cadSpaces.length - 15 }} 个空间
+                </div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
+            <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
+            <div v-else-if="uploadMode==='pdf'" class="card">
+              <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
+              <input type="file" accept=".pdf" @change="onPdfFileChange"
+                     class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+              <p v-if="pdfFile" class="text-xs text-green-600 mt-2">✅ {{ pdfFile.name }}</p>
+              <button v-if="pdfFile && !pdfLoading" class="btn-primary text-xs mt-3" @click="startPdfAnalysis">
+                🚀 识别PDF
+              </button>
+              <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
+            </div>
+            <!-- 图片预览 -->
+            <div v-if="imagePreviewUrl && uploadMode==='single'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
+              <p class="text-xs text-gray-500 mb-1">🖼️ 效果图预览:</p>
+              <img :src="imagePreviewUrl" class="w-full h-32 object-cover rounded border border-gray-200" />
+            </div>
           </div>
         </div>
 
@@ -242,6 +285,22 @@ const imageResult = ref(null)
 const sysStatus = ref(null)
 const historyRef = ref(null)
 
+// 文件预览
+const cadPreviewUrl = ref('')
+const imagePreviewUrl = ref('')
+const cadSpaces = ref([])
+
+// 流水步骤
+const cadDone = ref(false)
+const imgDone = ref(false)
+const analysisDone = ref(false)
+const flowSteps = computed(() => [
+  { num: '1', label: '上传CAD', done: cadDone.value, active: !cadDone.value && !imgDone.value },
+  { num: '2', label: '上传效果图', done: imgDone.value, active: cadDone.value && !imgDone.value },
+  { num: '3', label: '开始分析', done: analysisDone.value, active: (cadDone.value || imgDone.value) && !analysisDone.value },
+  { num: '4', label: '查看结果', done: false, active: analysisDone.value },
+])
+
 // 视觉模型
 const vlSaving = ref(false)
 const activeModel = ref('')
@@ -301,8 +360,25 @@ const sysStatusText = computed(() => {
   return `${t.task_state} | LLaVA: ${t.llava_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
 })
 
-function onCadFileChange(f) { cadFile.value = f }
-function onImageFileChange(f) { imageFile.value = f }
+function onCadFileChange(f) {
+  cadFile.value = f
+  cadDone.value = !!f
+  if (f) {
+    cadPreviewUrl.value = f.name // 标记已上传
+  } else {
+    cadPreviewUrl.value = ''
+    cadSpaces.value = []
+  }
+}
+function onImageFileChange(f) {
+  imageFile.value = f
+  imgDone.value = !!f
+  if (f) {
+    imagePreviewUrl.value = URL.createObjectURL(f)
+  } else {
+    imagePreviewUrl.value = ''
+  }
+}
 function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
   if (results.length > 0) {
@@ -315,6 +391,12 @@ function clearFiles() {
   imageFile.value = null
   cadResult.value = null
   imageResult.value = null
+  cadPreviewUrl.value = ''
+  imagePreviewUrl.value = ''
+  cadSpaces.value = []
+  cadDone.value = false
+  imgDone.value = false
+  analysisDone.value = false
 }
 
 async function startAnalysis() {
@@ -325,6 +407,10 @@ async function startAnalysis() {
     cadResult.value = null
     cadResult.value = await API.analyzeCad(cadFile.value, projectName.value)
     sysStatus.value = (await API.getStatus()).data || sysStatus.value
+    // 解析成功后填充CAD空间预览
+    if (cadResult.value?.data?.spaces) {
+      cadSpaces.value = cadResult.value.data.spaces
+    }
   }
 
   if (imageFile.value) {
@@ -335,6 +421,7 @@ async function startAnalysis() {
   }
 
   loading.value = false
+  analysisDone.value = true
 }
 
 function onNewQuote(quoteId) {
