@@ -73,8 +73,8 @@ TASK_LOCKS = {
 }
 
 # 超时阈值（秒），设为0表示不超时
-TIMEOUT_CAD = 30
-TIMEOUT_AI = 0     # 不设超时，适配CPU笔记本慢速推理
+TIMEOUT_CAD = 0     # 不设超时
+TIMEOUT_AI = 0     # 不设超时
 TIMEOUT_MERGE = 10
 TIMEOUT_EXPORT = 15
 
