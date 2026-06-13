@@ -72,9 +72,9 @@ TASK_LOCKS = {
     "export": STATE_EXPORT,
 }
 
-# 超时阈值（秒）
+# 超时阈值（秒），设为0表示不超时
 TIMEOUT_CAD = 30
-TIMEOUT_AI = 120
+TIMEOUT_AI = 0     # 不设超时，适配CPU笔记本慢速推理
 TIMEOUT_MERGE = 10
 TIMEOUT_EXPORT = 15
 
@@ -190,6 +190,7 @@ async def require_idle(task_type: str):
 async def safe_run(task_type: str, timeout: int, fn, *args, **kwargs):
     """
     带超时熔断的安全执行器
+    - timeout=0 表示不设超时（适配CPU慢速推理）
     - 耗时 CAD 操作在子进程运行，可强杀
     - 普通协程用 asyncio.wait_for
     """
@@ -200,17 +201,18 @@ async def safe_run(task_type: str, timeout: int, fn, *args, **kwargs):
     error_info = ""
     data = None
     try:
+        to = timeout if timeout > 0 else None  # 0 → None 表示不超时
         if task_type == "cad":
             loop = asyncio.get_event_loop()
             fut = loop.run_in_executor(task_state._executor, fn, *args, **kwargs)
-            data = await asyncio.wait_for(fut, timeout=timeout)
+            data = await asyncio.wait_for(fut, timeout=to)
         else:
             # 同步函数用线程池执行，避免asyncio无法await普通返回值
             loop = asyncio.get_event_loop()
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=1) as pool:
                 fut = loop.run_in_executor(pool, fn, *args, **kwargs)
-                data = await asyncio.wait_for(fut, timeout=timeout)
+                data = await asyncio.wait_for(fut, timeout=to)
 
         duration = time.time() - start
         await db.update_log(log_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "success", duration)
