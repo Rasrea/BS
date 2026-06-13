@@ -35,3 +35,6 @@ Thumbs.db
 
 # Build
 frontend/dist/
+
+# 基准测试报告（自动生成，不入库）
+docs/03-规范/benchmark_reports/
