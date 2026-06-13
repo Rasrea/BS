@@ -162,18 +162,36 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              {{ loading
-                ? (analysisType === 'cad' ? '🔄 CAD解析中...' : '🔄 AI识别中...')
-                : '🚀 开始分析' }}
+              {{ loading ? '⏳ 执行中...' : '🚀 开始分析' }}
             </button>
             <button v-if="cadFile || imageFile" class="btn-secondary text-sm" @click="clearFiles">清空重选</button>
-            <span v-if="loading" class="text-xs text-primary-600 animate-pulse">
-              ⏱ 单任务执行中，请勿重复操作...
-            </span>
 
             <!-- 状态提示 -->
             <div v-if="sysStatus" class="flex items-center gap-3 ml-auto">
               <span class="text-xs text-gray-400">系统: {{ sysStatus.task_state }}</span>
+            </div>
+          </div>
+
+          <!-- 详细进度 -->
+          <div v-if="loading && progressSteps.length > 0" class="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div v-for="(step, i) in progressSteps" :key="i" class="flex items-start gap-2 py-1">
+              <!-- 状态图标 -->
+              <span v-if="step.status === 'done'" class="text-green-500 text-xs mt-0.5">✓</span>
+              <span v-else-if="step.status === 'active'" class="text-primary-500 text-xs mt-0.5">
+                <svg class="animate-spin w-3 h-3" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              </span>
+              <span v-else class="text-gray-300 text-xs mt-0.5">○</span>
+              <!-- 步骤文字 -->
+              <span class="text-xs" :class="{
+                'text-green-700 font-medium': step.status === 'done',
+                'text-primary-700 font-medium': step.status === 'active',
+                'text-gray-400': step.status === 'pending',
+              }">{{ step.text }}</span>
+              <!-- 耗时 -->
+              <span v-if="step.duration" class="text-[10px] text-gray-400 ml-auto">{{ step.duration }}</span>
             </div>
           </div>
         </div>
@@ -291,6 +309,21 @@ const cadResult = ref(null)
 const imageResult = ref(null)
 const sysStatus = ref(null)
 const historyRef = ref(null)
+const progressSteps = ref([])
+
+// 进度辅助函数
+function addStep(text) {
+  progressSteps.value.push({ text, status: 'pending', duration: '' })
+}
+function setStepActive(text) {
+  const s = progressSteps.value.find(s => s.text === text)
+  if (s) s.status = 'active'
+}
+function setStepDone(text, duration = '') {
+  const s = progressSteps.value.find(s => s.text === text)
+  if (s) { s.status = 'done'; s.duration = duration }
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 // 文件预览
 const cadPreviewUrl = ref('')
@@ -404,16 +437,36 @@ function clearFiles() {
   cadDone.value = false
   imgDone.value = false
   analysisDone.value = false
+  progressSteps.value = []
 }
 
 async function startAnalysis() {
   loading.value = true
+  progressSteps.value = []
 
   if (cadFile.value) {
     analysisType.value = 'cad'
     cadResult.value = null
+
+    addStep('📤 上传CAD文件...')
+    addStep('🔍 解析CAD图纸...')
+    addStep('📐 计算面积和工程量...')
+    setStepActive('📤 上传CAD文件...')
+    await sleep(100)
+
+    const t0 = Date.now()
     cadResult.value = await API.analyzeCad(cadFile.value, projectName.value)
-    sysStatus.value = (await API.getStatus()).data || sysStatus.value
+    const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
+    setStepDone('📤 上传CAD文件...', dur)
+
+    if (cadResult.value?.success) {
+      setStepDone('🔍 解析CAD图纸...')
+      setStepDone('📐 计算面积和工程量...')
+    } else {
+      setStepDone('🔍 解析CAD图纸...', '失败')
+      setStepDone('📐 计算面积和工程量...', '失败')
+    }
+
     // 解析成功后填充CAD空间预览
     if (cadResult.value?.data?.spaces) {
       cadSpaces.value = cadResult.value.data.spaces
@@ -423,9 +476,31 @@ async function startAnalysis() {
   if (imageFile.value) {
     analysisType.value = 'ai'
     imageResult.value = null
+
+    addStep('📤 上传效果图...')
+    addStep('🖼️ 预处理图片（压缩/裁剪）...')
+    addStep('🧠 调用视觉模型识别...')
+    addStep('📋 解析识别结果...')
+    setStepActive('📤 上传效果图...')
+    await sleep(100)
+
+    const t0 = Date.now()
     imageResult.value = await API.analyzeImage(imageFile.value)
-    sysStatus.value = (await API.getStatus()).data || sysStatus.value
+    const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
+
+    setStepDone('📤 上传效果图...', dur)
+    setStepDone('🖼️ 预处理图片（压缩/裁剪）...')
+    setStepDone('🧠 调用视觉模型识别...')
+
+    if (imageResult.value?.success) {
+      setStepDone('📋 解析识别结果...')
+    } else {
+      setStepDone('📋 解析识别结果...', '失败')
+    }
   }
+
+  // 更新系统状态
+  sysStatus.value = (await API.getStatus()).data || sysStatus.value
 
   loading.value = false
   analysisDone.value = true
