@@ -493,10 +493,12 @@ async def analyze_image(
 @app.post("/api/vision_test")
 async def vision_test(
     image_file: UploadFile = File(None),
+    model: str = Form(""),
 ):
     """
     独立视觉模型测试接口（诊断用）
     - 无状态机锁，无数据库写，无30s超时
+    - 可指定模型：留空用系统默认，或传具体模型名
     - 返回各步骤耗时 + 原始模型响应
     """
     if not image_file:
@@ -517,15 +519,17 @@ async def vision_test(
     stats = preprocess_image_stats(str(save_path), processed_path)
     timings["preprocess"] = round(time.time() - t0, 3)
 
-    # 步骤2：模型推理（直接调用 recognise）
+    # 步骤2：模型推理
     t0 = time.time()
     from image_recognizer import recognize_with_fallback
-    settings = await db.get_settings()
-    vl_model = settings.get("active_vl_model", "qwen2.5:7b")
+    if model:
+        vl_model = model
+    else:
+        settings = await db.get_settings()
+        vl_model = settings.get("active_vl_model", "qwen2.5:7b")
     data = recognize_with_fallback(processed_path, vl_model)
     timings["inference"] = round(time.time() - t0, 3)
 
-    # 步骤3：解析耗时
     t_total = round(time.time() - t_total, 3)
 
     # 清理临时文件
@@ -535,6 +539,14 @@ async def vision_test(
     except Exception:
         pass
 
+    # 获取可用模型列表
+    try:
+        from db import db as _db
+        settings_data = await _db.get_settings()
+        available = settings_data.get("available_vl_models", [])
+    except Exception:
+        available = []
+
     result = {
         "timings": {
             "preprocess": timings["preprocess"],
@@ -542,6 +554,7 @@ async def vision_test(
             "total": t_total,
         },
         "model_used": vl_model,
+        "available_models": available,
         "image_info": {
             "filename": image_file.filename,
             "original_size_kb": round(stats["original_size_kb"], 1),
