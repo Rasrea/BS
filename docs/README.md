@@ -1,68 +1,89 @@
-# BuildSight 家装智能自动报价系统 — 文档索引
+# BuildSight 家装智能自动报价系统
 
-**v0.8.0**
+> 基于 PMBOK 6/7 + CMMI 标准体系的全生命周期项目管理教学案例
 
----
+## 项目概述
 
-## 演示材料
-
-| 文件 | 说明 |
+| 项目 | 内容 |
 |------|------|
-| 📊 `BuildSight_从0到1.pptx` | 项目演示PPT（6页，面向管理层/客户） |
+| 项目名称 | BuildSight（家装智能自动报价系统） |
+| 版本 | v0.9.0 |
+| 技术栈 | Python FastAPI + Vue3 + SQLite + Ollama |
+| 代码仓库 | [gitee.com/sjdliuxinfeng/buildsight.git](https://gitee.com/sjdliuxinfeng/buildsight.git) |
+| 启动方式 | `bash start.sh` → http://localhost:8100/ |
 
-## 01-需求
-
-| 文件 | 说明 |
-|------|------|
-| 📄 `功能规格.md` | 功能需求定义（8项已实现 + 待完成 + 二期规划） |
-
-## 02-设计
-
-| 文件 | 说明 |
-|------|------|
-| 📄 `系统架构.md` | 整体架构图 + 双线数据流 + 三层门禁 |
-| 📄 `数据库设计.md` | 9张表结构详解 + detail_json/material_info v2.0 |
-| 📄 `API设计.md` | 全部10个接口规范 + 统一响应格式 |
-| 📄 `视觉识别Harness架构.md` | BuildSight Harness：5阶段流水线 + 重试闭环 |
-
-## 03-规范
-
-| 文件/目录 | 说明 |
-|-----------|------|
-| 📄 `门禁规范.md` | 任务状态机 + 文件门禁 + 超时熔断 + 前端互斥 |
-| 📄 `模型调用规范.md` | Ollama结构化Prompt + 三层模型策略 |
-| 📄 `模型视觉识别Benchmark基准规范.md` | 标准化评测流程 + 4项门禁 + 归档规范 |
-| 📄 `基准测试说明与原始凭证.md` | 核心指标定义 + Ground Truth + 准确率演进(16.7%→92%) |
-| 📄 `benchmark_runner.py` | 自动化基准评测脚本（476行，可复跑） |
-| 📁 `benchmark_reports/` | 评测报告归档（保留最新2-3份） |
-
-## 04-方案
-
-| 文件 | 说明 |
-|------|------|
-| 📄 `整体方案.md` | 推进方案（P0/P1/P2 + 四阶段排期） |
-| 📄 `首期任务书.md` | 完整首期工程化任务书（437行，最完整） |
-| 📄 `规范化开发拆分方案.md` | 7智能体分工 + 三环境隔离 + 管控规则 |
-
----
-
-## 代码结构
+## 目录结构（按软件工程阶段组织）
 
 ```
-cad/
-├── backend/             # FastAPI + SQLite 后端
-│   ├── main.py              # 主服务（10组API端点）
-│   ├── db.py                # 数据库层
-│   ├── cad_parser.py        # DXF矢量解析
-│   ├── image_recognizer.py  # 视觉识别兼容层
-│   ├── surface_breakdown.py # 分层工程量
-│   ├── quantity_estimator.py# 报价引擎
-│   ├── fusion_validator.py  # 数据融合
-│   ├── excel_export.py      # Excel导出
-│   ├── auth_proxy.py        # 公网Basic Auth代理
-│   ├── vision_harness/      # Harness架构(8模块)
-│   └── start.sh             # 启动脚本
-├── frontend/            # Vue3 + Vite
-│   └── src/components/     # 14个组件
-└── docs/                # 本文档目录
+buildsight/
+├── start.sh                          ← 一键启动脚本
+├── backend/                          ← 后端（FastAPI）
+├── frontend/                         ← 前端（Vue3）
+└── docs/                             ← 项目管理文档库
+    ├── 01-需求分析阶段/
+    │   ├── 01-立项管理手册/
+    │   │   └── BuildSight-立项管理手册.md     ← 项目章程
+    │   ├── 02-需求分析报告/
+    │   │   └── 功能规格说明书.md
+    │   └── 03-需求追溯矩阵/
+    │       └── BuildSight-需求追溯矩阵.md     ← 需求→设计→代码→测试 全追溯
+    │
+    ├── 02-系统设计阶段/
+    │   ├── 01-系统架构设计/系统架构.md
+    │   ├── 02-数据库设计/数据库设计.md
+    │   ├── 03-API设计/API接口规范.md
+    │   ├── 04-视觉识别架构/视觉识别Harness架构.md
+    │   └── 05-模型调用规范/模型调用规范.md
+    │
+    ├── 03-编码实现阶段/
+    │   ├── 01-模型基准测试/
+    │   │   ├── 模型视觉识别Benchmark基准规范.md
+    │   │   ├── 基准测试说明与原始凭证.md
+    │   │   ├── benchmark_runner.py
+    │   │   └── benchmark报告_*.md
+    │   └── 02-门禁规范/三层门禁规范.md
+    │
+    ├── 04-测试验证阶段/                ← 待扩展（集成测试/性能测试）
+    │   └── 01-功能测试用例/
+    │
+    ├── 05-项目收尾阶段/
+    │   ├── 01-项目验收报告/
+    │   │   └── BuildSight-项目验收报告.md     ← 验收结论：✅ 通过
+    │   ├── 02-项目总结报告/
+    │   │   └── BuildSight-项目总结报告.md     ← 经验教训+未来规划
+    │   ├── 03-结题报告/
+    │   │   └── 整体技术方案.md
+    │   └── 04-项目任务书/
+    │       └── 首期工程化任务书.md
+    │
+    └── 99-参考/
+        ├── BuildSight_从0到1.pptx              ← 教学案例PPT
+        └── 01-Copilot提示词库/
+            └── Copilot提示词全集-项目分析指南.md  ← 92个项目管理提示词
+
+## 版本历史
+
+| 版本 | 日期 | 内容 |
+|------|------|------|
+| v0.8.0 | 2026-06 | 首期工程化完成 |
+| v0.8.1~v0.8.10 | 2026-06 | 迭代优化（启动脚本/识别测试/多图/进度条/PPT入库） |
+| **v0.9.0** | **2026-06** | **项目管理体系重构（PMBOK+CMMI标准）** |
+
+## 项目管理标准
+
+本项目的文档体系参考以下标准规范：
+
+- **PMBOK 6** — 五大过程组、十大知识领域
+- **PMBOK 7** — 八大绩效域、12条原则
+- **CMMI** — 过程域与成熟度等级
+- **GB/T 31102-2025** — 软件工程知识域
+- **GB/T 42965-2023** — 软件组织能力域
+
+## 快速启动
+
+```bash
+git clone https://gitee.com/sjdliuxinfeng/buildsight.git
+cd buildsight
+bash start.sh
+# 访问 http://localhost:8100/
 ```
