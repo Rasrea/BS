@@ -151,9 +151,11 @@ def err(code: int, message: str, data=None, task_status=None, trace_id="") -> di
 # ─────────────────── 门禁工具函数 ───────────────────
 
 ALLOWED_CAD_EXT = {".dxf", ".dwg"}
-ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"}
+ALLOWED_PDF_EXT = {".pdf"}
 MAX_CAD_SIZE = 120 * 1024 * 1024   # 120MB
 MAX_IMG_SIZE = 10 * 1024 * 1024    # 10MB
+MAX_PDF_SIZE = 50 * 1024 * 1024    # 50MB
 
 
 def check_mixed_request(cad_file: UploadFile, image_file: UploadFile):
@@ -482,6 +484,64 @@ async def analyze_image(
         result["warning"] = data["error"]
 
     return ok(result, task_status=STATE_IDLE, trace_id=tid)
+
+
+@app.post("/api/analyze_pdf")
+async def analyze_pdf(pdf_file: UploadFile = File(None)):
+    """PDF施工图识别：PDF→图片→复用LLaVA识别"""
+    if not pdf_file:
+        return err(400, "请上传PDF文件")
+
+    content, ext = await check_file_gate(pdf_file, MAX_PDF_SIZE, ALLOWED_PDF_EXT, "PDF")
+
+    import fitz  # PyMuPDF
+    task_id = uuid.uuid4().hex[:12]
+    pdf_path = UPLOAD_DIR / f"{task_id}_src.pdf"
+    pdf_path.write_bytes(content)
+
+    # 逐页转图
+    doc = fitz.open(str(pdf_path))
+    pages = []
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        mat = fitz.Matrix(2, 2)  # 2x缩放 提高清晰度
+        pix = page.get_pixmap(matrix=mat)
+        img_path = UPLOAD_DIR / f"{task_id}_p{page_num}.jpg"
+        pix.save(str(img_path))
+        pages.append(str(img_path))
+    doc.close()
+
+    if not pages:
+        return err(400, "PDF为空或无法渲染")
+
+    # 对每一页做识别（只认第一页返回详细结构，其余统计）
+    settings = await db.get_settings()
+    vl_model = settings.get("active_vl_model", "llava:7b")
+
+    results = []
+    for i, img_path in enumerate(pages):
+        processed = preprocess_image(img_path, output_dir=str(UPLOAD_DIR))
+        data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback, processed, vl_model)
+        page_result = {
+            "page": i + 1,
+            "total_pages": len(pages),
+        }
+        if error:
+            page_result["error"] = error
+        elif data:
+            structured = data.get("structured", {})
+            page_result["recognized_space"] = structured.get("space_type", "")
+            page_result["wall_material"] = structured.get("wall_material", "")
+            page_result["floor_material"] = structured.get("floor_material", "")
+            page_result["ceiling_material"] = structured.get("ceiling_material", "")
+            page_result["confidence"] = data.get("success", False)
+        results.append(page_result)
+
+    return ok({
+        "filename": pdf_file.filename,
+        "total_pages": len(pages),
+        "results": results,
+    }, task_status=STATE_IDLE, trace_id=tid)
 
 
 # ─────────────────── 接口：数据融合 ───────────────────

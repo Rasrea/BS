@@ -67,13 +67,27 @@
             :class="uploadMode==='multi' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
             多张队列
           </button>
+          <button @click="uploadMode='pdf'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+            :class="uploadMode==='pdf' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+            📄 PDF识别
+          </button>
         </div>
 
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <CadUploader @file-change="onCadFileChange" />
           <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
-          <ImageQueue v-else @results-update="onQueueResults" />
+          <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
+          <div v-else-if="uploadMode==='pdf'" class="card">
+            <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
+            <input type="file" accept=".pdf" @change="onPdfFileChange"
+                   class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
+            <p v-if="pdfFile" class="text-xs text-green-600 mt-2">✅ {{ pdfFile.name }}</p>
+            <button v-if="pdfFile && !pdfLoading" class="btn-primary text-xs mt-3" @click="startPdfAnalysis">
+              🚀 识别PDF
+            </button>
+            <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
+          </div>
         </div>
 
         <!-- 操作按钮区 -->
@@ -106,10 +120,24 @@
         <ImageResultCard :data="imageResult" />
 
         <!-- 操作指引 -->
-        <div v-if="!cadResult && !imageResult" class="card text-center text-gray-400 py-8">
+        <div v-if="!cadResult && !imageResult && !pdfResult" class="card text-center text-gray-400 py-8">
           <p class="text-4xl mb-3">🏗️</p>
-          <p class="text-sm">上传 CAD 图纸或效果图，系统将自动解析并识别</p>
-          <p class="text-xs mt-2">📌 提示：CAD 和效果图须分两次上传（禁止混合）</p>
+          <p class="text-sm">上传 CAD 图纸、效果图或 PDF 施工图，系统将自动解析并识别</p>
+          <p class="text-xs mt-2">📌 提示：CAD / 效果图 / PDF 请分次上传（禁止混合）</p>
+        </div>
+        <!-- PDF结果 -->
+        <div v-if="pdfResult" class="card mt-4">
+          <h3 class="text-sm font-semibold text-gray-700 mb-2">📄 PDF识别结果</h3>
+          <div class="text-xs text-gray-600">
+            <p>文件: {{ pdfResult.data?.filename }}</p>
+            <p>页数: {{ pdfResult.data?.total_pages }}页</p>
+            <div v-for="r in pdfResult.data?.results" :key="r.page" class="mt-2 p-2 bg-gray-50 rounded">
+              <p class="font-medium">第{{ r.page }}页</p>
+              <p>空间: {{ r.recognized_space || '未识别' }}</p>
+              <p>墙面: {{ r.wall_material || '-' }} | 地面: {{ r.floor_material || '-' }} | 顶面: {{ r.ceiling_material || '-' }}</p>
+            </div>
+          </div>
+          <button class="btn-primary text-xs mt-3" @click="pdfResult=null; activeTab='merge'">前往融合报价 →</button>
         </div>
       </div>
 
@@ -256,5 +284,28 @@ async function startAnalysis() {
 function onNewQuote(quoteId) {
   // 生成报价后自动切到历史页
   activeTab.value = 'history'
+}
+
+// ======== PDF识别 ========
+const pdfFile = ref(null)
+const pdfLoading = ref(false)
+const pdfResult = ref(null)
+
+function onPdfFileChange(e) {
+  pdfFile.value = e.target.files[0] || null
+}
+
+async function startPdfAnalysis() {
+  if (!pdfFile.value) return
+  pdfLoading.value = true
+  const fd = new FormData()
+  fd.append('pdf_file', pdfFile.value)
+  const res = await API.post('/analyze_pdf', fd)
+  pdfResult.value = res
+  pdfLoading.value = false
+  if (res.success) {
+    pdfFile.value = null  // 清空
+    activeTab.value = 'merge'  // 切到融合报价
+  }
 }
 </script>
