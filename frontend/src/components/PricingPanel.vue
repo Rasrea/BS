@@ -310,43 +310,7 @@ async function switchTemplate(tid) {
   }
 }
 
-// ======== 视觉模型 ========
-const vlLoading = ref(false)
-const vlSaving = ref(false)
-const activeModel = ref('')
-const selectedModel = ref('')
-const availableModels = ref([])
-const vlMsg = ref('')
-const vlMsgType = ref('success')
-
-async function loadVlModels() {
-  vlLoading.value = true
-  const res = await API.get('/settings/vl_model')
-  if (res.success && res.data) {
-    activeModel.value = res.data.active_model
-    selectedModel.value = res.data.active_model
-    availableModels.value = res.data.available_models || []
-  }
-  vlLoading.value = false
-}
-
-async function switchModel() {
-  if (!selectedModel.value || selectedModel.value === activeModel.value) return
-  vlSaving.value = true
-  vlMsg.value = ''
-  const fd = new FormData()
-  fd.append('model', selectedModel.value)
-  const res = await API.post('/settings/vl_model', fd)
-  if (res.success) {
-    activeModel.value = res.data.active_model
-    vlMsg.value = `已切换至 ${res.data.active_model}`
-    vlMsgType.value = 'success'
-  } else {
-    vlMsg.value = res.message || '切换失败'
-    vlMsgType.value = 'error'
-  }
-  vlSaving.value = false
-}
+// ======== 视觉模型（已迁移至App.vue首页） ========
 
 // ======== 定价配置（分组） ========
 const pricingLoaded = ref(false)
@@ -538,7 +502,6 @@ async function loadProcesses() {
 
 onMounted(() => {
   loadTemplates()
-  loadVlModels()
   loadPricing()
   loadPricingItems()
   loadProcesses()
