@@ -22,7 +22,7 @@
               <span class="w-1.5 h-1.5 rounded-full" :class="statusDotClass"></span>
               {{ statusText }}
             </span>
-            <span class="text-xs text-gray-400">v2.1</span>
+            <span class="text-xs text-gray-400">V1.0.0</span>
           </div>
         </div>
       </div>
