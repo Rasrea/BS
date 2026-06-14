@@ -110,8 +110,8 @@ const imgResults = [
   ["顶面材质", "石膏板吊顶", "客厅标准吊顶"],
   ["装修风格", "现代简约", "主流家装风格"],
   ["——", "——", "——"],
-  ["模型", "qwen2.5:7b", "92%准确率"],
-  ["耗时", "0.5秒/张", "本地推理"],
+  ["模型", "qwen2.5vl:latest", "50%准确率（需人工修正）"],
+  ["耗时", "1.2秒/张", "GPU推理"],
 ];
 imgResults.forEach((row, i) => {
   const y = 1.63 + i * 0.23;
@@ -171,7 +171,7 @@ s4.addText("看效果图猜材质 → 手动查材料表 → 逐项录入报价�
 s4.addShape(pres.shapes.RECTANGLE, { x: 5.1, y: 3.9, w: 4.3, h: 1.5, fill: { color: C.white }, shadow: { type: "outer", blur: 6, offset: 2, angle: 135, color: "000000", opacity: 0.06 } });
 s4.addShape(pres.shapes.RECTANGLE, { x: 5.1, y: 3.9, w: 0.06, h: 1.5, fill: { color: C.green } });
 s4.addText("BuildSight：AI自动识别", { x: 5.35, y: 3.95, w: 3.9, h: 0.25, fontSize: 12, fontFace: "Arial", bold: true, color: C.green, margin: 0 });
-s4.addText("上传效果图 → AI识别墙面/地面/顶面材质 → 0.5秒出结果，92%准确率", { x: 5.35, y: 4.2, w: 3.9, h: 1.0, fontSize: 10, fontFace: "Arial", color: C.muted, margin: 0, lineSpacingMultiple: 1.3 });
+s4.addText("上传效果图 → AI识别墙面/地面/顶面材质 → 1.2秒出结果（GPU），系统测试46项通过", { x: 5.35, y: 4.2, w: 3.9, h: 1.0, fontSize: 10, fontFace: "Arial", color: C.muted, margin: 0, lineSpacingMultiple: 1.3 });
 
 // ══════════ SLIDE 5: 成果 ══════════
 let s5 = pres.addSlide();
@@ -181,7 +181,7 @@ s5.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 0.85, w: 1.2, h: 0.04, fill: { c
 
 [{ num: "106", label: "单张图纸\n解析空间数", color: C.orange },
  { num: "997㎡", label: "全屋\n总面积", color: "2C5F8A" },
- { num: "92%", label: "AI材质\n识别准确率", color: C.green },
+ { num: "50%", label: "AI材质\n识别准确率\n（需人工修正）", color: C.green },
  { num: "¥1,040万", label: "融合报价\n总金额", color: "2C5F8A" },
 ].forEach((s, i) => {
   const x = 0.5 + i * 2.35;

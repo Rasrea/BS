@@ -20,6 +20,8 @@ buildsight/
 ├── backend/                          ← 后端（FastAPI）
 ├── frontend/                         ← 前端（Vue3）
 └── docs/                             ← 项目管理文档库
+    ├── 教学规范/                     ← 🆕 智能体工作规范手册
+    │   └── BuildSight-智能体工作规范手册.md  ← 8个智能体的分工/代码/教学指南
     ├── 01-需求分析阶段/
     │   ├── 01-立项管理手册/
     │   │   └── BuildSight-立项管理手册.md     ← 项目章程
