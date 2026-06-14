@@ -878,6 +878,23 @@ async def data_merge(
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("地面工程", ""), 0),
             })
 
+        # ── 去重聚合：相同project_name的分项合并 ──
+        merged = {}
+        for it in items:
+            key = it["project_name"]
+            if key in merged:
+                merged[key]["quantity"] = round(merged[key]["quantity"] + it["quantity"], 2)
+                merged[key]["subtotal"] = round(merged[key]["subtotal"] + it["subtotal"], 2)
+                src = it.get("source", "")
+                if src and src not in merged[key].get("source", ""):
+                    merged[key]["source"] = merged[key].get("source", "") + " + " + src
+            else:
+                merged[key] = dict(it)
+        items = sorted(merged.values(), key=lambda x: (
+            {"墙面工程": 0, "地面工程": 1, "吊顶工程": 2}.get(x.get("category", ""), 9),
+            x.get("project_name", "")
+        ))
+
         trace = {
             "cad_result_id": cad_result_id,
             "image_result_ids": img_ids,
