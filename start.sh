@@ -73,9 +73,21 @@ echo "     如果超时，可安装轻量模型 moondream（1.8B，CPU快3-5倍�
 echo "       ollama pull moondream"
 echo "     然后在系统首页模型下拉选择 moondream 即可"
 
-# ── 4. 启动服务 ──
+# ── 4. 检查端口并清理旧进程 ──
 echo ""
-echo "[4/4] 启动后端服务..."
+echo "[4/5] 检查端口冲突..."
+if lsof -i :$PORT -sTCP:LISTEN &>/dev/null 2>&1; then
+    echo "  ⚠️  端口 $PORT 已被占用，正在关闭旧进程..."
+    fuser -k ${PORT}/tcp 2>/dev/null
+    sleep 1
+    echo "  ✅ 旧进程已关闭"
+else
+    echo "  ✅ 端口 $PORT 空闲"
+fi
+
+# ── 5. 启动服务 ──
+echo ""
+echo "[5/5] 启动后端服务..."
 echo ""
 echo "  📍 地址: http://localhost:$PORT/"
 echo "  📂 目录: $BACKEND_DIR"
