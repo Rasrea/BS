@@ -78,9 +78,18 @@ echo ""
 echo "[4/5] 检查端口冲突..."
 if lsof -i :$PORT -sTCP:LISTEN &>/dev/null 2>&1; then
     echo "  ⚠️  端口 $PORT 已被占用，正在关闭旧进程..."
-    fuser -k ${PORT}/tcp 2>/dev/null
-    sleep 1
-    echo "  ✅ 旧进程已关闭"
+    kill_cmd="lsof -ti :$PORT 2>/dev/null"
+    pids=$(eval $kill_cmd)
+    if [ -n "$pids" ]; then
+        echo "  → 进程PID: $pids"
+        kill -9 $pids 2>/dev/null
+        sleep 1
+        echo "  ✅ 旧进程已关闭"
+    else
+        echo "  ⚠️  无法获取进程PID，尝试fuser..."
+        fuser -k ${PORT}/tcp 2>/dev/null || true
+        sleep 1
+    fi
 else
     echo "  ✅ 端口 $PORT 空闲"
 fi
