@@ -176,8 +176,8 @@ function addBinding() { bindings.value.push({ cad_space_name: '', material_desc:
 function removeBinding(idx) { bindings.value.splice(idx, 1) }
 
 async function loadResults() {
-  // 从历史记录中提取CAD结果和图片结果
-  const h = await API.getHistory(1, 50)
+  // 只取最近3条报价记录，避免出现历史测试数据
+  const h = await API.getHistory(1, 3)
   if (h.success && h.data?.quotes?.items) {
     const seen = new Set()
     h.data.quotes.items.forEach(q => {
@@ -191,10 +191,14 @@ async function loadResults() {
         })
       }
     })
+    // 自动选中最新一条
+    if (cadResults.value.length > 0 && !selectedCadId.value) {
+      selectedCadId.value = cadResults.value[0].id
+    }
   }
-  // 尝试直接从DB获取图片结果
+  // 图片结果也从最近3条取
   try {
-    const resp = await fetch('/api/history?page=1&page_size=100')
+    const resp = await fetch('/api/history?page=1&page_size=3')
     const body = await resp.json()
     if (body.success && body.data?.quotes?.items) {
       const seen = new Set()

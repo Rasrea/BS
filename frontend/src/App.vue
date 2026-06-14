@@ -13,7 +13,7 @@
             </div>
             <div>
               <h1 class="text-lg font-bold text-gray-900">家装智能报价系统</h1>
-              <p class="text-[10px] text-gray-500">CAD解析 · AI识别 · 数据融合 · 自动报价</p>
+              <p class="text-[10px] text-gray-500">图纸分析 · 分层明细 · 融合报价 · 施工工序</p>
             </div>
           </div>
           <div class="flex items-center gap-3">
@@ -207,9 +207,9 @@
 
         <!-- 操作指引 -->
         <div v-if="!cadResult && !imageResult && !pdfResult" class="card text-center text-gray-400 py-8">
-          <p class="text-4xl mb-3">🏗️</p>
-          <p class="text-sm">上传 CAD 图纸、效果图或 PDF 施工图，系统将自动解析并识别</p>
-          <p class="text-xs mt-2">📌 提示：CAD / 效果图 / PDF 请分次上传（禁止混合）</p>
+          <p class="text-4xl mb-3">📐</p>
+          <p class="text-sm">上传 CAD 图纸或效果图，系统自动完成图纸分析</p>
+          <p class="text-xs mt-2">💡 流程：图纸分析 → 分层明细 → 融合报价 → 施工工序</p>
         </div>
         <!-- PDF结果 -->
         <div v-if="pdfResult" class="card mt-4">
@@ -306,14 +306,14 @@ import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
 
 const tabs = [
-  { key: 'home', label: '🏠 首页' },
-  { key: 'merge', label: '🔄 融合报价' },
-  { key: 'breakdown', label: '📐 分层明细' },
-  { key: 'history', label: '📋 历史记录' },
-  { key: 'settings', label: '⚙️ 定价配置' },
+  { key: 'home', label: '📐 图纸分析' },
+  { key: 'breakdown', label: '📋 分层明细' },
+  { key: 'merge', label: '💰 融合报价' },
   { key: 'processes', label: '🔧 施工工序' },
-  { key: 'comparison', label: '📋 双源核对' },
   { key: 'reports', label: '📊 标准报价' },
+  { key: 'history', label: '📋 历史记录' },
+  { key: 'comparison', label: '📋 双源核对' },
+  { key: 'settings', label: '⚙️ 定价配置' },
   { key: 'logs', label: '📝 操作日志' },
   { key: 'vision_test', label: '🔬 识别测试' },
 ]

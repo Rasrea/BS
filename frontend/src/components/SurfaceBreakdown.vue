@@ -311,13 +311,20 @@ const paginatedSpaces = computed(() => {
 // 实际上我们用 filteredSpaces 直接在表格显示，加上分页控制
 
 onMounted(async () => {
-  await loadDrawings()
+  await loadLatestDrawing()
 })
 
-async function loadDrawings() {
+async function loadLatestDrawing() {
   const res = await API.get('/drawings')
   if (res.success && Array.isArray(res.data)) {
-    drawings.value = res.data
+    // 只取最新的一个，自动选中
+    if (res.data.length > 0) {
+      const latest = res.data[0]
+      drawings.value = [latest]
+      selectedDrawingId.value = latest.id
+      // 自动计算并加载分层数据
+      await computeAndFetch()
+    }
   }
 }
 
