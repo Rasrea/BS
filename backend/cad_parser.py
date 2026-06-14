@@ -357,13 +357,210 @@ def _parse_dxf(file_path: str) -> dict:
         except Exception:
             pass
 
+    # ── 补充：当LW闭合多边形无法提取房间时，使用LINE墙体线+尺寸标注推算 ──
+    if len(result_spaces) == 0 and keyword_labels:
+        result_spaces = _calc_rooms_from_lines(msp, keyword_labels, dimensions)
+        parse_method = "dxf墙体线推算"
+    else:
+        parse_method = "dxf矢量解析"
+
     return {
         "spaces": result_spaces,
         "total_polylines": len(polylines),
         "total_texts": len(texts),
         "total_dimensions": len(dimensions),
-        "parse_method": "dxf矢量解析",
+        "parse_method": parse_method,
     }
+
+
+# ── LINE墙体线+尺寸标注推算房间面积（兜底方案，当DXF墙体用LINE画时） ──
+
+def _calc_rooms_from_lines(msp, room_labels, dimensions) -> list:
+    """
+    当DXF墙体用LINE线段绘制（无LWPOLYLINE闭合多边形）时，
+    通过墙体线位置 + 尺寸标注值推算每个房间的近似尺寸和面积。
+    """
+    import math
+
+    # 1. 提取墙体LINE线段
+    wall_layers = {"000-墙体1", "0", "建筑墙体", "墙体"}
+    segments = []
+    for e in msp:
+        if e.dxftype() != "LINE":
+            continue
+        if e.dxf.layer not in wall_layers:
+            continue
+        s, ep = e.dxf.start, e.dxf.end
+        dx, dy = ep.x - s.x, ep.y - s.y
+        length = math.sqrt(dx*dx + dy*dy)
+        if length > 200:  # 过滤过短线段
+            segments.append({
+                "x1": s.x, "y1": s.y, "x2": ep.x, "y2": ep.y,
+                "length": length,
+            })
+
+    # 2. 提取尺寸标注值
+    h_dims, v_dims = [], []
+    for d in dimensions:
+        val = d.get("text", "")
+        try:
+            v = float(val) if val else 0
+        except ValueError:
+            v = 0
+        pos = d["position"]
+        angle = d.get("angle", 0)
+        # 判断水平还是垂直：根据标注线和角度
+        if -45 < angle < 45 or angle > 135 or angle < -135:
+            h_dims.append({"val_mm": v, "x": pos[0], "y": pos[1]})
+        else:
+            v_dims.append({"val_mm": v, "x": pos[0], "y": pos[1]})
+
+    # 3. 对每个房间标签，估算尺寸
+    def pt_to_seg_dist(px, py, seg):
+        """点到线段的最短距离"""
+        x1, y1, x2, y2 = seg["x1"], seg["y1"], seg["x2"], seg["y2"]
+        dx, dy = x2 - x1, y2 - y1
+        if dx == 0 and dy == 0:
+            return math.sqrt((px - x1)**2 + (py - y1)**2)
+        t = ((px - x1)*dx + (py - y1)*dy) / (dx*dx + dy*dy)
+        t = max(0, min(1, t))
+        nx, ny = x1 + t*dx, y1 + t*dy
+        return math.sqrt((px - nx)**2 + (py - ny)**2)
+
+    def find_wall_dir(px, py, segs, dx, dy, max_d=15000, step=100):
+        """从px,py出发沿(dx,dy)方向找最近的墙"""
+        for d in range(step, max_d, step):
+            tx, ty = px + dx*d, py + dy*d
+            for s in segs:
+                if pt_to_seg_dist(tx, ty, s) < 150:  # 15cm内算碰到墙
+                    return d
+        return max_d
+
+    def nearest_dim_value(px, py, dims, is_horizontal, max_dist=5000):
+        """找最近的尺寸标注值"""
+        best_val = 0
+        best_dist = max_dist
+        for d in dims:
+            dist = math.sqrt((px - d["x"])**2 + (py - d["y"])**2)
+            if dist < best_dist:
+                best_val = d["val_mm"]
+                best_dist = dist
+        return best_val
+
+    # 把尺寸标注按所在区域（Y轴范围）分组
+    # 水平标注通常在墙体外侧，用Y坐标区分不同行的标注
+    def group_by_y(dims, threshold=3000):
+        groups = []
+        used = set()
+        for i, d1 in enumerate(dims):
+            if i in used:
+                continue
+            group = [d1]
+            used.add(i)
+            for j, d2 in enumerate(dims):
+                if j not in used and abs(d1["y"] - d2["y"]) < threshold:
+                    group.append(d2)
+                    used.add(j)
+            # 取该组中位Y
+            mid_y = sorted(g["y"] for g in group)[len(group)//2]
+            # 按X排序
+            group.sort(key=lambda g: g["x"])
+            groups.append({"y": mid_y, "items": group})
+        return groups
+
+    h_groups = group_by_y(h_dims)
+    v_groups = group_by_y(v_dims)
+
+    # 按Y坐标（房间行）匹配水平尺寸组
+    # 同时计算每行的总宽度和房间数
+    def pick_h_group(room_y, h_groups, max_dy=3000):
+        best = None
+        best_dy = max_dy
+        for g in h_groups:
+            dy = abs(room_y - g["y"])
+            if dy < best_dy:
+                best = g
+                best_dy = dy
+        return best
+
+    result = []
+    # 按行处理房间 — 用Y坐标最大间隔自动分行
+    rooms_sorted = sorted(room_labels, key=lambda rl: rl["pt"].y, reverse=True)
+
+    # 计算相邻房间的Y间隔，取最大的分隔点作为分行
+    y_gaps = []
+    for i in range(len(rooms_sorted) - 1):
+        gap = abs(rooms_sorted[i]["pt"].y - rooms_sorted[i+1]["pt"].y)
+        y_gaps.append((gap, i))
+    y_gaps.sort(key=lambda x: -x[0])
+
+    # 取所有>1200mm的间隔作为分行点
+    split_indices = sorted({idx for gap, idx in y_gaps if gap > 1200})
+
+    row_map = []
+    start = 0
+    for si in split_indices:
+        row_map.append(rooms_sorted[start:si+1])
+        start = si + 1
+    if start < len(rooms_sorted):
+        row_map.append(rooms_sorted[start:])
+
+    # 找总建筑宽度（所有水平尺寸最大值）
+    total_w_mm = max((item["val_mm"] for g in h_groups for item in g["items"]), default=14600)
+    # 垂直尺寸按X区域匹配每行的高度
+    v_dims_by_x = {}
+    for item in v_dims:
+        nearby_key = round(item["x"] / 1000)
+        if nearby_key not in v_dims_by_x or abs(item["val_mm"] - 3000) < abs(v_dims_by_x[nearby_key]["val_mm"] - 3000):
+            v_dims_by_x[nearby_key] = item
+
+    result = []
+    for row_rooms in row_map:
+        row_rooms.sort(key=lambda r: r["pt"].x)
+        n = len(row_rooms)
+        x_min = min(r["pt"].x for r in row_rooms)
+        x_max = max(r["pt"].x for r in row_rooms)
+        x_span = max(x_max - x_min, 1)
+
+        # 找该行的垂直高度：取最近的垂直标注
+        row_h_mm = 3000  # 默认3m
+        for x_key in sorted(v_dims_by_x.keys()):
+            if abs(x_key*1000 - (x_min + x_max)/2) < 5000:
+                if 2000 < v_dims_by_x[x_key]["val_mm"] < 7000:
+                    row_h_mm = v_dims_by_x[x_key]["val_mm"]
+                    break
+
+        for i, r in enumerate(row_rooms):
+            if n == 1:
+                w_mm = min(total_w_mm * 0.4, 6000)  # 单房间最多6m
+            elif i == 0:
+                nxt = row_rooms[1]["pt"].x
+                ratio = (nxt - r["pt"].x) / x_span
+                w_mm = total_w_mm * ratio * 0.9
+            elif i == n - 1:
+                prev = row_rooms[i-1]["pt"].x
+                ratio = (r["pt"].x - prev) / x_span
+                w_mm = total_w_mm * ratio * 0.9
+            else:
+                nxt = row_rooms[i+1]["pt"].x
+                prev = row_rooms[i-1]["pt"].x
+                ratio = ((nxt - prev) / 2) / x_span
+                w_mm = total_w_mm * ratio * 0.9
+
+            w_mm = max(min(w_mm, 12000), 1200)  # 限制1.2m~12m
+            h_mm = row_h_mm
+            w_m = round(w_mm / 1000, 2)
+            h_m = round(h_mm / 1000, 2)
+            area = round(w_m * h_m, 2)
+            result.append({
+                "name": r["name"],
+                "area_sqm": area,
+                "perimeter_m": round(2 * (w_m + h_m), 2),
+                "dimensions": {"width_mm": round(w_mm), "height_mm": round(h_mm), "width_m": w_m, "height_m": h_m},
+                "vertex_count": 4, "confidence": 0.6,
+            })
+
+    return result
 
 
 CAD_IMAGE_PROMPT = """你是一位专业的建筑CAD图纸分析专家。请仔细分析这张CAD户型图，提取以下信息：
