@@ -739,6 +739,36 @@ async def data_merge(
 
         # 材质差价（按空间匹配结果逐项估算）
         material_diff = 0
+
+        # 读取定价模板用于自动匹配项目单价
+        pricing_items = await db.get_pricing_items()
+        # 构建价格索引
+        price_index = {}
+        for pi in sorted(pricing_items, key=lambda x: x.get("id", 0)):
+            st = pi.get("surface_type", "")
+            name = pi.get("item_name", "")
+            mat_p = pi.get("unit_price_material", 0) or 0
+            lab_p = pi.get("unit_price_labor", 0) or 0
+            if st not in ("wall", "floor", "ceiling"):
+                continue
+            for kw in ["乳胶漆", "瓷砖", "墙纸", "木饰面", "地砖", "地板",
+                        "实木地板", "复合地板", "大理石", "石膏板", "铝扣板"]:
+                if kw in name and (st, kw) not in price_index:
+                    price_index[(st, kw)] = {"material": mat_p, "labor": lab_p}
+
+        def _auto_match_price(category, material_name):
+            surface_map = {"墙面工程": "wall", "地面工程": "floor", "吊顶工程": "ceiling"}
+            st = surface_map.get(category, "")
+            if not st or not material_name:
+                return None
+            for kw in ["乳胶漆", "瓷砖", "墙纸", "木饰面", "地砖", "地板",
+                        "实木地板", "复合地板", "大理石", "石膏板", "铝扣板"]:
+                if kw in material_name:
+                    match = price_index.get((st, kw))
+                    if match:
+                        return match
+            return None
+
         for r in cad_rows:
             cad_name = r.get("space_name", "")
             space_area = r.get("area", 0)
@@ -788,15 +818,18 @@ async def data_merge(
 
             # 墙面项
             source_label = f"CAD工程量 + AI材质识别{'(人工绑定)' if mat_source == 'manual' else ''}" if mat_source else "CAD工程量"
+            wall_match = _auto_match_price("墙面工程", wall_mat_name)
+            wall_mat_price = wall_match["material"] if wall_match else 18
+            wall_lab_price = wall_match["labor"] if wall_match else 22
             items.append({
                 "space_name": cad_name,
                 "category": "墙面工程",
                 "project_name": f"{wall_mat_name}墙面",
                 "quantity": round(wall_area, 2),
                 "unit": "㎡",
-                "material_unit_price": 18,
-                "labor_unit_price": 22,
-                "subtotal": round(wall_area * 40, 2),
+                "material_unit_price": wall_mat_price,
+                "labor_unit_price": wall_lab_price,
+                "subtotal": round(wall_area * (wall_mat_price + wall_lab_price), 2),
                 "source": source_label,
                 "material_name": wall_mat_name,
                 "material_source": mat_source,
@@ -804,15 +837,18 @@ async def data_merge(
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("墙面工程", ""), 0),
             })
             # 地面项
+            floor_match = _auto_match_price("地面工程", floor_mat_name)
+            floor_mat_price = floor_match["material"] if floor_match else 45
+            floor_lab_price = floor_match["labor"] if floor_match else 35
             items.append({
                 "space_name": cad_name,
                 "category": "地面工程",
                 "project_name": f"{floor_mat_name}铺贴",
                 "quantity": round(space_area, 2),
                 "unit": "㎡",
-                "material_unit_price": 45,
-                "labor_unit_price": 35,
-                "subtotal": round(space_area * 80, 2),
+                "material_unit_price": floor_mat_price,
+                "labor_unit_price": floor_lab_price,
+                "subtotal": round(space_area * (floor_mat_price + floor_lab_price), 2),
                 "source": source_label,
                 "material_name": floor_mat_name,
                 "material_source": mat_source,
@@ -857,6 +893,140 @@ async def data_merge(
 
     except Exception as e:
         return err(500, f"融合失败: {str(e)}", task_status=STATE_IDLE, trace_id=tid)
+    finally:
+        await task_state.release()
+
+
+# ─────────────────── 接口：报价项编辑+重算 ───────────────────
+
+@app.put("/api/quote/{quote_id}/items")
+async def update_quote_items(quote_id: int, body: dict):
+    """
+    更新报价明细项并自动重算汇总金额
+    入参：{"items": [...]}
+    每个 item 支持修改: quantity, material_unit_price, labor_unit_price,
+                        material_name, project_name, category
+    自动匹配 pricing_items 获取标准单价（用户可覆盖）
+    """
+    quote = await db.get_quote(quote_id)
+    if not quote:
+        return err(404, "报价记录不存在")
+
+    tid = ""
+    try:
+        ok_flag, tid = await task_state.acquire("merge")
+        if not ok_flag:
+            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+
+        updated = body.get("items", [])
+        if not updated:
+            return err(422, "缺少 items 参数")
+
+        # 读取定价模板用于自动匹配单价
+        pricing_items = await db.get_pricing_items()
+        settings = await db.get_settings()
+        loss_rate = float(settings.get("loss_rate", 0.03))
+        manage_rate = float(settings.get("manage_fee_rate", 0.05))
+        tax_rate = float(settings.get("tax_rate", 0.03))
+
+        # 构建定价索引：surface_type + material_name_keyword → unit_price
+        # 如 wall+乳胶漆 → (18, 22), floor+地砖 → (45, 35)
+        # 按id排序取最早（非删除）的匹配项
+        price_index = {}  # (surface_type, keyword) → {material: ..., labor: ..., total: ...}
+        for pi in sorted(pricing_items, key=lambda x: x.get("id", 0)):
+            st = pi.get("surface_type", "")
+            name = pi.get("item_name", "")
+            mat = pi.get("unit_price_material", 0) or 0
+            lab = pi.get("unit_price_labor", 0) or 0
+            if st not in ("wall", "floor", "ceiling"):
+                continue
+            for kw in ["乳胶漆", "瓷砖", "墙纸", "木饰面", "地砖", "地板",
+                        "实木地板", "复合地板", "大理石", "石膏板", "铝扣板"]:
+                if kw in name and (st, kw) not in price_index:
+                    price_index[(st, kw)] = {"material": mat, "labor": lab}
+
+        def _auto_match_price(category, material_name):
+            """根据类别和材质名自动匹配单价"""
+            surface_map = {"墙面工程": "wall", "地面工程": "floor", "吊顶工程": "ceiling"}
+            st = surface_map.get(category, "")
+            if not st or not material_name:
+                return None
+            for kw in ["乳胶漆", "瓷砖", "墙纸", "木饰面", "地砖", "地板",
+                        "实木地板", "复合地板", "大理石", "石膏板", "铝扣板"]:
+                if kw in material_name:
+                    match = price_index.get((st, kw))
+                    if match:
+                        return match
+            return None
+
+        # 处理每个 item
+        for item in updated:
+            qty = float(item.get("quantity", 0))
+            mat_name = item.get("material_name", "")
+            cat = item.get("category", "")
+
+            # 自动匹配单价（用户未手动修改时）
+            if "material_unit_price" not in item or item.get("_auto_priced", True):
+                match = _auto_match_price(cat, mat_name)
+                if match:
+                    item["material_unit_price"] = match["material"]
+                    item["labor_unit_price"] = match["labor"]
+                    item["_auto_priced"] = True
+
+            mat_price = float(item.get("material_unit_price", 0) or 0)
+            lab_price = float(item.get("labor_unit_price", 0) or 0)
+            item["subtotal"] = round(qty * (mat_price + lab_price), 2)
+
+        # 重算汇总
+        base_price = sum(
+            float(i.get("subtotal", 0)) for i in updated
+        )
+        material_diff = 0  # 已含在 item 单价中，无需额外计算
+        process_add = sum(
+            float(i.get("subtotal", 0)) for i in updated if "造型" in i.get("project_name", "")
+        )
+        loss_price = base_price * loss_rate
+        manage_fee = base_price * manage_rate
+        tax_fee = (base_price + loss_price + manage_fee) * tax_rate
+        final_price = base_price + loss_price + manage_fee + tax_fee
+
+        totals = {
+            "base_price": round(base_price, 2),
+            "material_diff_price": round(material_diff, 2),
+            "process_add_price": round(process_add, 2),
+            "loss_price": round(loss_price, 2),
+            "manage_fee": round(manage_fee, 2),
+            "tax_fee": round(tax_fee, 2),
+            "final_price": round(final_price, 2),
+        }
+
+        trace = {
+            "previous_items_count": len(quote.get("quote_detail_json", [])),
+            "updated_items_count": len(updated),
+            "update_time": datetime.now().isoformat(),
+            "settings": settings,
+        }
+
+        await db.update_quote_items(quote_id, updated, totals, trace)
+
+        # 记录操作日志
+        tid_log = uuid.uuid4().hex[:12]
+        await db.add_log(
+            task_type="manual_edit",
+            operation_action=f"报价编辑: quote_id={quote_id}, {len(updated)}项, 总计¥{totals['final_price']:.0f}",
+            lock_status="idle",
+            trace_id=tid_log,
+            run_status="success",
+        )
+
+        return ok({
+            "quote_id": quote_id,
+            **totals,
+            "items": updated,
+        }, task_status=STATE_IDLE, trace_id=tid)
+
+    except Exception as e:
+        return err(500, f"编辑报价失败: {str(e)}", task_status=STATE_IDLE, trace_id=tid)
     finally:
         await task_state.release()
 
@@ -1428,6 +1598,7 @@ async def bind_surface_material(
             return err(404, f"CAD结果 {cad_id} 不存在")
 
         row = dict(rows[0])
+        space_name = row.get("space_name", "")
         detail = row.get("detail_json", {})
         if isinstance(detail, str):
             try:
@@ -1447,6 +1618,16 @@ async def bind_surface_material(
 
         await db.update_cad_detail_json(cad_id, detail)
 
+        # 记录操作日志
+        trace_id = uuid.uuid4().hex[:12]
+        await db.add_log(
+            task_type="manual_edit",
+            operation_action=f"材质绑定: {space_name} → {surface}={material_name}",
+            lock_status="idle",
+            trace_id=trace_id,
+            run_status="success",
+        )
+
         return ok({
             "cad_id": cad_id,
             "surface": surface,
@@ -1456,6 +1637,52 @@ async def bind_surface_material(
 
     except Exception as e:
         return err(500, f"材质绑定失败: {str(e)}")
+
+
+# ─────────────────── 接口：空间名编辑 ───────────────────
+
+@app.put("/api/spaces/{cad_id}/rename")
+async def rename_space(cad_id: int, body: dict):
+    """
+    编辑 CAD 空间名称
+    入参：{"space_name": "新名称"}
+    """
+    new_name = body.get("space_name", "").strip()
+    if not new_name:
+        return err(422, "space_name 不能为空")
+
+    try:
+        rows = await db.fetchall(
+            "SELECT * FROM cad_analysis_results WHERE id=? AND is_deleted=0", (cad_id,)
+        )
+        if not rows:
+            return err(404, f"CAD结果 {cad_id} 不存在")
+
+        old_name = dict(rows[0]).get("space_name", "")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        await db.execute(
+            "UPDATE cad_analysis_results SET space_name=?, update_time=? WHERE id=?",
+            (new_name, now, cad_id)
+        )
+
+        # 记录操作日志
+        trace_id = uuid.uuid4().hex[:12]
+        await db.add_log(
+            task_type="manual_edit",
+            operation_action=f"空间重命名: '{old_name}' → '{new_name}'",
+            lock_status="idle",
+            trace_id=trace_id,
+            run_status="success",
+        )
+
+        return ok({
+            "cad_id": cad_id,
+            "old_name": old_name,
+            "new_name": new_name,
+        }, message=f"已重命名: {old_name} → {new_name}")
+
+    except Exception as e:
+        return err(500, f"重命名失败: {str(e)}")
 
 # ─────────────────── 接口：自动匹配建议 + 确认绑定（全链路） ───────────────────
 
@@ -1806,6 +2033,232 @@ async def export_process_quote(
         return err(500, f"导出失败: {str(e)}", task_status=STATE_IDLE, trace_id=tid)
     finally:
         await task_state.release()
+
+
+# ─────────────────── 接口：双源数据核对表 ───────────────────
+
+@app.get("/api/spaces/{drawing_id}/comparison")
+async def get_comparison_table(drawing_id: int):
+    """
+    返回CAD与AI双源数据比对表。
+    每行包含：空间名、面积、各表面材质(AI识别)、比对状态、异常标记。
+    """
+    try:
+        cad_rows = await db.get_cad_results(drawing_id)
+        if not cad_rows:
+            return err(404, f"图纸 {drawing_id} 没有CAD分析结果")
+
+        # 取所有AI识别结果
+        image_rows = await db.get_image_results()
+        ai_by_space = {}
+        for img in image_rows:
+            space = img.get("recognized_space", "").strip()
+            if not space:
+                continue
+            mat = img.get("material_info", {})
+            if isinstance(mat, str):
+                try:
+                    mat = json.loads(mat)
+                except Exception:
+                    mat = {}
+            conf = img.get("confidence", 0)
+            if space not in ai_by_space or img["id"] > ai_by_space[space].get("image_id", 0):
+                ai_by_space[space] = {"materials": mat, "confidence": conf, "image_id": img["id"]}
+
+        import space_synonyms
+
+        rows = []
+        anomaly_count = 0
+        for r in cad_rows:
+            cad_name = r.get("space_name", "未命名空间")
+            area = r.get("area", 0)
+            detail = r.get("detail_json", {})
+            if isinstance(detail, str):
+                try:
+                    detail = json.loads(detail)
+                except Exception:
+                    detail = {}
+
+            # 匹配AI材质
+            matched_ai = None
+            matched_space = ""
+            for ai_space, ai_data in ai_by_space.items():
+                if space_synonyms.match_space_name(cad_name, ai_space):
+                    matched_ai = ai_data
+                    matched_space = ai_space
+                    break
+
+            wall_mat = ""
+            floor_mat = ""
+            ceiling_mat = ""
+            ai_conf = 0
+            if matched_ai:
+                mat = matched_ai.get("materials", {})
+                wall_mat = str(mat.get("wall", mat.get("墙面材质", "")))
+                floor_mat = str(mat.get("floor", mat.get("地面材质", "")))
+                ceiling_mat = str(mat.get("ceiling", mat.get("吊顶材质", "")))
+                ai_conf = matched_ai.get("confidence", 0)
+
+            # 异常判定
+            anomalies = []
+            if cad_name in ("未命名空间", "") or cad_name.startswith("未命名"):
+                anomalies.append("空间名称未识别")
+            if area <= 0:
+                anomalies.append("面积为0或负数")
+            if not matched_ai:
+                anomalies.append("AI材质未匹配")
+            elif ai_conf < 0.5:
+                anomalies.append(f"AI置信度偏低({ai_conf:.0%})")
+            else:
+                if not wall_mat:
+                    anomalies.append("墙面材质未识别")
+                if not floor_mat:
+                    anomalies.append("地面材质未识别")
+                if not ceiling_mat:
+                    anomalies.append("顶面材质未识别")
+
+            status = "正常"
+            if anomalies:
+                status = "异常"
+                anomaly_count += 1
+
+            rows.append({
+                "space_id": r.get("id", 0),
+                "space_name": cad_name,
+                "area_sqm": round(area, 2) if area else 0,
+                "wall_material": wall_mat,
+                "floor_material": floor_mat,
+                "ceiling_material": ceiling_mat,
+                "ai_confidence": round(ai_conf, 2),
+                "ai_matched_space": matched_space,
+                "status": status,
+                "anomalies": anomalies,
+                "surface_materials": detail.get("surface_materials", {}),
+            })
+
+        # 统计
+        total = len(rows)
+        normal = total - anomaly_count
+
+        return ok({
+            "drawing_id": drawing_id,
+            "total_spaces": total,
+            "normal_count": normal,
+            "anomaly_count": anomaly_count,
+            "rows": rows,
+        })
+
+    except Exception as e:
+        return err(500, f"比对失败: {str(e)}")
+
+
+# ─────────────────── 接口：标准报价表（综合/分项/工序） ───────────────────
+
+@app.get("/api/quote/{quote_id}/standard_report")
+async def get_standard_report(quote_id: int):
+    """
+    返回标准报价表的三个视图数据：
+    1. 综合报价总表（项目概况+工种汇总）
+    2. 空间分项明细表（每个空间逐项）
+    3. 工序费用明细表（按工序聚合）
+    """
+    try:
+        quote = await db.get_quote(quote_id)
+        if not quote:
+            return err(404, "报价记录不存在")
+
+        items = quote.get("quote_detail_json", [])
+        if isinstance(items, str):
+            items = json.loads(items)
+
+        # ─── 1. 综合报价总表 ───
+        summary = {
+            "project_name": quote.get("project_name", "装修工程"),
+            "total_area": sum(i.get("quantity", 0) for i in items if "面积" not in i.get("project_name", "")) or 0,
+            "total_price": quote.get("final_price", 0),
+            "base_price": quote.get("base_price", 0),
+            "material_diff": quote.get("material_diff_price", 0),
+            "loss_price": quote.get("loss_price", 0),
+            "manage_fee": quote.get("manage_fee", 0),
+            "tax_fee": quote.get("tax_fee", 0),
+            "create_time": quote.get("create_time", ""),
+            "quote_id": quote_id,
+        }
+
+        # 工种汇总
+        process_totals = {}
+        for item in items:
+            proc = item.get("process_name", "其他")
+            if proc not in process_totals:
+                process_totals[proc] = {"subtotal": 0, "count": 0, "spaces": set()}
+            process_totals[proc]["subtotal"] += float(item.get("subtotal", 0))
+            process_totals[proc]["count"] += 1
+            if item.get("space_name"):
+                process_totals[proc]["spaces"].add(item["space_name"])
+        summary["process_summary"] = [
+            {
+                "process_name": k,
+                "subtotal": round(v["subtotal"], 2),
+                "item_count": v["count"],
+                "space_count": len(v["spaces"]),
+            }
+            for k, v in sorted(process_totals.items(), key=lambda x: -x[1]["subtotal"])
+        ]
+
+        # ─── 2. 空间分项明细表 ───
+        space_detail = {}
+        for item in items:
+            sn = item.get("space_name", "其他")
+            if sn not in space_detail:
+                space_detail[sn] = {"items": [], "space_subtotal": 0}
+            space_detail[sn]["items"].append(item)
+            space_detail[sn]["space_subtotal"] += float(item.get("subtotal", 0))
+        summary["space_details"] = [
+            {
+                "space_name": k,
+                "space_subtotal": round(v["space_subtotal"], 2),
+                "items": v["items"],
+            }
+            for k, v in sorted(space_detail.items(), key=lambda x: -x[1]["space_subtotal"])
+        ]
+
+        # ─── 3. 工序费用明细表 ───
+        cad_result_id = quote.get("cad_result_id", 0)
+        cad_rows = await db.get_cad_results(cad_result_id) if cad_result_id else []
+        # 获取工序列表
+        sys_procs = await db.get_processes()
+        proc_details = []
+        for proc in sys_procs:
+            pname = proc["name"]
+            related = [i for i in items if i.get("process_name") == pname]
+            if not related:
+                continue
+            space_set = set()
+            labor_cost = 0
+            material_cost = 0
+            for i in related:
+                space_set.add(i.get("space_name", ""))
+                qty = float(i.get("quantity", 0))
+                mat_p = float(i.get("material_unit_price", 0) or 0)
+                lab_p = float(i.get("labor_unit_price", 0) or 0)
+                material_cost += qty * mat_p
+                labor_cost += qty * lab_p
+            proc_details.append({
+                "process_name": pname,
+                "sort_order": proc.get("sort_order", proc.get("id", 0)),
+                "spaces": sorted([s for s in space_set if s]),
+                "space_count": len(space_set),
+                "material_cost": round(material_cost, 2),
+                "labor_cost": round(labor_cost, 2),
+                "subtotal": round(material_cost + labor_cost, 2),
+            })
+        proc_details.sort(key=lambda x: x["sort_order"])
+        summary["process_details"] = proc_details
+
+        return ok(summary)
+
+    except Exception as e:
+        return err(500, f"获取报价表失败: {str(e)}")
 
 
 # ─────────────────── 前端静态文件 ───────────────────

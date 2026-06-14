@@ -111,6 +111,10 @@
             :class="uploadMode==='pdf' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
             📄 PDF识别
           </button>
+          <button @click="uploadMode='cad_batch'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+            :class="uploadMode==='cad_batch' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
+            📐 CAD批量
+          </button>
         </div>
 
         <!-- 双上传区 -->
@@ -135,6 +139,7 @@
           <div>
             <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
             <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
+            <CadBatchUploader v-else-if="uploadMode==='cad_batch'" @results-update="onCadBatchResults" />
             <div v-else-if="uploadMode==='pdf'" class="card">
               <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
               <input type="file" accept=".pdf" @change="onPdfFileChange"
@@ -255,6 +260,16 @@
         <LogViewer />
       </div>
 
+      <!-- Tab: 双源核对 -->
+      <div v-show="activeTab === 'comparison'">
+        <ComparisonPanel />
+      </div>
+
+      <!-- Tab: 标准报价 -->
+      <div v-show="activeTab === 'reports'">
+        <StandardReport />
+      </div>
+
       <!-- Tab 7: 识别测试 -->
       <div v-show="activeTab === 'vision_test'">
         <VisionTestPanel />
@@ -286,6 +301,9 @@ import ProcessPanel from './components/ProcessPanel.vue'
 import ProcessSpaceMap from './components/ProcessSpaceMap.vue'
 import SurfaceBreakdown from './components/SurfaceBreakdown.vue'
 import VisionTestPanel from './components/VisionTestPanel.vue'
+import CadBatchUploader from './components/CadBatchUploader.vue'
+import ComparisonPanel from './components/ComparisonPanel.vue'
+import StandardReport from './components/StandardReport.vue'
 
 const tabs = [
   { key: 'home', label: '🏠 首页' },
@@ -294,6 +312,8 @@ const tabs = [
   { key: 'history', label: '📋 历史记录' },
   { key: 'settings', label: '⚙️ 定价配置' },
   { key: 'processes', label: '🔧 施工工序' },
+  { key: 'comparison', label: '📋 双源核对' },
+  { key: 'reports', label: '📊 标准报价' },
   { key: 'logs', label: '📝 操作日志' },
   { key: 'vision_test', label: '🔬 识别测试' },
 ]
@@ -423,6 +443,12 @@ function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
   if (results.length > 0) {
     activeTab.value = 'merge'
+  }
+}
+function onCadBatchResults(results) {
+  // CAD批量完成后自动切到历史记录查看结果
+  if (results.length > 0) {
+    activeTab.value = 'history'
   }
 }
 

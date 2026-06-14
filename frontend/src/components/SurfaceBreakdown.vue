@@ -113,13 +113,18 @@
                 class="hover:bg-gray-50/50 transition-colors"
                 :class="{ 'bg-yellow-50/30': !s.material_source && !hasManualMat(s) }">
               <td class="px-4 py-2 font-medium text-gray-800 whitespace-nowrap">
-                {{ s.space_name }}
-                <span v-if="!s.material_source && !hasManualMat(s)"
-                      class="ml-1.5 text-[10px] text-yellow-600 bg-yellow-100 px-1.5 py-0.5 rounded-full">未匹配</span>
-                <span v-else-if="s.material_source"
-                      class="ml-1.5 text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">AI</span>
-                <span v-else
-                      class="ml-1.5 text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">手动</span>
+                <div class="flex items-center gap-1">
+                  <span>{{ s.space_name }}</span>
+                  <button class="text-[10px] text-gray-400 hover:text-primary-600 ml-0.5"
+                          @click="showRenameDialog(s)"
+                          title="重命名">✏️</button>
+                  <span v-if="!s.material_source && !hasManualMat(s)"
+                        class="ml-1.5 text-[10px] text-yellow-600 bg-yellow-100 px-1.5 py-0.5 rounded-full">未匹配</span>
+                  <span v-else-if="s.material_source"
+                        class="ml-1.5 text-[10px] text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">AI</span>
+                  <span v-else
+                        class="ml-1.5 text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">手动</span>
+                </div>
               </td>
               <td class="px-4 py-2 text-right text-gray-600">{{ s.area.toFixed(1) }}</td>
               <!-- 地面 -->
@@ -221,6 +226,26 @@
         </div>
       </div>
     </div>
+
+    <!-- 重命名对话框 -->
+    <div v-if="renameDialog.show"
+         class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+         @click.self="renameDialog.show = false">
+      <div class="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl">
+        <h3 class="text-sm font-bold text-gray-900 mb-3">✏️ 空间重命名</h3>
+        <p class="text-xs text-gray-500 mb-3">原名称: <span class="font-medium">{{ renameDialog.oldName }}</span></p>
+        <input v-model="renameDialog.newName" placeholder="输入新的空间名称"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+               @keyup.enter="doRename" />
+        <div class="flex justify-end gap-2 mt-5">
+          <button class="btn-secondary text-sm" @click="renameDialog.show = false">取消</button>
+          <button class="btn-primary text-sm" :disabled="!renameDialog.newName || renaming"
+                  @click="doRename">
+            {{ renaming ? '保存中...' : '✅ 保存' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -244,6 +269,14 @@ const quickMaterials = [
   { name: '木地板' }, { name: '大理石' }, { name: '石膏板吊顶' },
   { name: '铝扣板吊顶' }, { name: '木饰面' },
 ]
+
+const renameDialog = ref({
+  show: false,
+  cadId: null,
+  oldName: '',
+  newName: '',
+})
+const renaming = ref(false)
 
 const bindDialog = ref({
   show: false,
@@ -360,6 +393,32 @@ function showBindDialog(space) {
     materialName: '',
     materialCode: '',
   }
+}
+
+function showRenameDialog(space) {
+  renameDialog.value = {
+    show: true,
+    cadId: space.id,
+    oldName: space.space_name,
+    newName: space.space_name,
+  }
+}
+
+async function doRename() {
+  const rd = renameDialog.value
+  if (!rd.cadId || !rd.newName || rd.newName === rd.oldName) {
+    renameDialog.value.show = false
+    return
+  }
+  renaming.value = true
+  const res = await API.put(`/spaces/${rd.cadId}/rename`, { space_name: rd.newName })
+  if (res.success) {
+    renameDialog.value.show = false
+    await fetchBreakdown()  // 刷新数据
+  } else {
+    error.value = res.message || '重命名失败'
+  }
+  renaming.value = false
 }
 
 async function doBindMaterial() {

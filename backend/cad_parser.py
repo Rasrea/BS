@@ -121,10 +121,18 @@ def _parse_dxf(file_path: str) -> dict:
             elif hasattr(entity, 'get_measurement'):
                 dim_text = str(round(entity.get_measurement()))
             def_point = entity.dxf.defpoint2
+            # 收集所有定义点用于后续过滤
+            dim_points = []
+            if hasattr(entity.dxf, 'defpoint'):
+                dim_points.append((entity.dxf.defpoint.x, entity.dxf.defpoint.y))
+            dim_points.append((def_point.x, def_point.y))
+            if hasattr(entity.dxf, 'text_midpoint') and entity.dxf.text_midpoint:
+                dim_points.append((entity.dxf.text_midpoint.x, entity.dxf.text_midpoint.y))
             angle = entity.dxf.angle if hasattr(entity.dxf, 'angle') else 0
             dimensions.append({
                 "text": dim_text,
                 "position": (def_point.x, def_point.y),
+                "points": dim_points,
                 "angle": angle,
                 "layer": entity.dxf.layer,
             })
@@ -140,6 +148,20 @@ def _parse_dxf(file_path: str) -> dict:
         "客餐厅", "主卫", "次卫", "公卫",
         "家政", "储物", "多功能", "棋牌", "影音",
         "门厅", "西厨", "中厨", "阳光房",
+        # 补充常见房间名
+        "茶室", "棋牌室", "影音室", "健身房", "瑜伽",
+        "保姆房", "工人房", "杂物间", "设备间",
+        "入户花园", "观景台", "露台", "花园",
+        "主卧套房", "套房", "步入式", "更衣室",
+        "北次卧", "南次卧", "东次卧", "西次卧",
+        "北卧", "南卧", "东卧", "西卧",
+        "主卫", "次卫", "客卫", "公卫",
+        "中厨", "西厨", "开放式厨房",
+        "大厅", "中厅", "小厅",
+        "休息室", "娱乐室", "活动室",
+        "电梯厅", "电梯间", "前室",
+        "spa", "sauna", "laundry", "pantry",
+        "foyer", "hall", "lobby", "atrium",
     ]
 
     valid_polylines = []
@@ -168,18 +190,57 @@ def _parse_dxf(file_path: str) -> dict:
         "窗台石", "拆至上梁", "内嵌式",
         "此墙", "注：", "客户姓名", "工程地址",
         "设 计 师", "日   期", "孙老师", "济宁",
+        # 补充过滤项
+        "标高", "完成面", "建筑完成面", "结构面",
+        "地面完成面", "天花完成面", "墙面完成面",
+        "原始结构", "拆改", "砌墙", "新建墙体",
+        "回填", "找平", "防水", "保护层",
+        "排水", "给水", "强电", "弱电", "点位",
+        "空调", "新风", "暖气", "地暖", "分水器",
+        "烟道", "风道", "管井", "检修口",
+        "过梁", "圈梁", "构造柱",
+        "定位", "x=\"", "y=\"", "偏移",
+        "投影", "剖面", "立面", "节点",
+        "A0", "A1", "A2", "A3", "A4",
+        "图幅", "图名", "图号",
+        "立面图", "剖面图", "平面图", "顶面图",
+        "地坪", "标高", "层高",
+        "门洞", "窗洞", "预留洞",
+        "嵌缝", "留缝", "压条", "收口",
+        "门槛石", "挡水条",
+        "止水带", "反坎",
+        "减力墙", "剪力墙",
+        "柱位", "梁位",
+        "0.000", "±0.000",
     ]
 
     def _first_line(text: str) -> str:
-        """多行文字合并后取首行（处理DXF中\"客\\n厅\"之类的断行）"""
+        """多行文字合并后取首行（处理DXF中"客\\n厅"之类的断行）"""
         # 先合并被换行符打断的短行：如果每段很短（≤2字符），合并回来
         parts = text.split("\n")
         if len(parts) >= 2 and all(0 < len(p.strip()) <= 2 for p in parts if p.strip()):
             return "".join(p.strip() for p in parts)
         return parts[0].strip()
 
+    # ── 构建尺寸标注位置的快速查找集（用于过滤标注文字）──
+    # 收集所有尺寸线位置，用于剔除紧邻尺寸标注的纯数字/短文本
+    dim_positions = []
+    for d in dimensions:
+        for dp in d.get("points", []):
+            dim_positions.append(dp)
+        # 标注文本本身也加入
+        dim_positions.append(d["position"])
+    # 如果文字位置在任意尺寸标注点 500mm 范围内且为纯数字，跳过
+    def _is_near_dimension(pt, threshold_mm=500):
+        for dp in dim_positions:
+            dx = pt[0] - dp[0]
+            dy = pt[1] - dp[1]
+            if (dx*dx + dy*dy) ** 0.5 < threshold_mm:
+                return True
+        return False
+
     # ── 构建所有候选文字标签（先关键词过滤，保留全部候选用于兜底）──
-    ROOM_TEXT_LAYERS = {"000-墙体1", "0"}
+    ROOM_TEXT_LAYERS = {"000-墙体1", "0", "TEXT", "标注", "文字", "房间名", "空间名", "名称", "公共"}
 
     # 一层：含关键词的文字（高置信度）
     keyword_labels = []
@@ -203,10 +264,12 @@ def _parse_dxf(file_path: str) -> dict:
         if is_keyword:
             keyword_labels.append(label)
         elif len(first) <= 6:
-            # 短文本但含中文字符，可能为房间名（如"茶室""棋牌室"等不在关键词列表的）
+            # 短文本但含中文字符，可能为房间名
             has_cjk = any('\u4e00' <= c <= '\u9fff' for c in first)
             if has_cjk:
-                fallback_labels.append(label)
+                # 仅在远离尺寸标注时才考虑
+                if not _is_near_dimension(t["position"]):
+                    fallback_labels.append(label)
 
     # 去重：相同位置（100格）取最短名称
     def dedup_labels(labels):

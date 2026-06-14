@@ -448,6 +448,41 @@ class Database:
             (export_path, now, rid)
         )
 
+    async def update_quote_items(self, rid: int, items: list, totals: dict, trace_json: dict = None):
+        """更新报价明细项及汇总金额"""
+        now = _now()
+        base_price = totals.get("base_price", 0)
+        material_diff_price = totals.get("material_diff_price", 0)
+        process_add_price = totals.get("process_add_price", 0)
+        loss_price = totals.get("loss_price", 0)
+        manage_fee = totals.get("manage_fee", 0)
+        tax_fee = totals.get("tax_fee", 0)
+        final_price = totals.get("final_price", 0)
+        await self.execute(
+            """UPDATE quote_records SET
+               quote_detail_json=?, base_price=?, material_diff_price=?,
+               process_add_price=?, loss_price=?, manage_fee=?, tax_fee=?,
+               final_price=?, trace_json=?, update_time=?
+               WHERE id=?""",
+            (json.dumps(items, ensure_ascii=False),
+             base_price, material_diff_price, process_add_price,
+             loss_price, manage_fee, tax_fee, final_price,
+             json.dumps(trace_json or {}, ensure_ascii=False), now, rid)
+        )
+
+    async def get_pricing_items(self, template_id: int = None):
+        """获取定价分项，可选按模板筛选"""
+        if template_id:
+            rows = await self.fetchall(
+                "SELECT * FROM pricing_items WHERE template_id=? AND is_deleted=0 ORDER BY sort_order",
+                (template_id,)
+            )
+        else:
+            rows = await self.fetchall(
+                "SELECT * FROM pricing_items WHERE is_deleted=0 ORDER BY template_id, sort_order"
+            )
+        return [_row_to_dict(r) for r in rows]
+
     async def get_quote(self, rid: int):
         row = await self.fetchone(
             "SELECT * FROM quote_records WHERE id=? AND is_deleted=0", (rid,)
@@ -457,14 +492,33 @@ class Database:
     async def get_quotes(self, page: int = 1, page_size: int = 20):
         offset = (page - 1) * page_size
         rows = await self.fetchall(
-            "SELECT * FROM quote_records WHERE is_deleted=0 ORDER BY id DESC LIMIT ? OFFSET ?",
+            """SELECT q.*, d.cad_result_json as cad_detail_json, d.filename as drawing_name
+               FROM quote_records q
+               LEFT JOIN drawing_records d ON q.cad_result_id = d.id
+               WHERE q.is_deleted=0
+               ORDER BY q.id DESC LIMIT ? OFFSET ?""",
             (page_size, offset)
         )
         total = await self.fetchone(
             "SELECT COUNT(*) as cnt FROM quote_records WHERE is_deleted=0"
         )
+        items = []
+        for r in rows:
+            item = _row_to_dict(r)
+            # 解析 cad_detail_json 获取空间数
+            cdj = item.get('cad_detail_json', '{}')
+            if isinstance(cdj, str):
+                try:
+                    cdj = json.loads(cdj)
+                except:
+                    cdj = {}
+            if isinstance(cdj, dict):
+                item['space_count'] = cdj.get('spaces_count', 0)
+                item['total_area'] = cdj.get('total_area', 0)
+                item['cad_detail_json'] = cdj
+            items.append(item)
         return {
-            "items": [_row_to_dict(r) for r in rows],
+            "items": items,
             "total": total["cnt"] if total else 0,
             "page": page,
             "page_size": page_size
