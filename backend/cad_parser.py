@@ -140,7 +140,7 @@ def _parse_dxf(file_path: str) -> dict:
             pass
 
     room_keywords = [
-        "客厅", "餐厅", "主卧", "次卧", "卧室", "厨房",
+        "客厅", "餐厅", "主卧", "次卧", "卧室", "厨房", "客房",
         "卫生间", "厕所", "浴室", "阳台", "书房", "衣帽间",
         "玄关", "走廊", "过道", "储藏室", "儿童房", "老人房",
         "living", "dining", "bedroom", "kitchen", "bathroom",

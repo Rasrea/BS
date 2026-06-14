@@ -776,10 +776,32 @@ async def data_merge(
             mat = sm.get("materials", {})
             wall_mat = str(mat.get("wall", mat.get("墙面材质", "")))
             floor_mat = str(mat.get("floor", mat.get("地面材质", "")))
-            if "墙布" in wall_mat or "壁纸" in wall_mat:
-                material_diff += space_area * 0.6 * 30  # 墙面60%面积
-            if "地板" in floor_mat:
-                material_diff += space_area * 0.3 * 50  # 地面30%面积
+            ceiling_mat = str(mat.get("ceiling", mat.get("顶面材质", "")))
+            # 墙面材质差价（相对于基础乳胶漆18元/㎡）
+            WALL_BASE = 18
+            wall_premium = {"瓷砖": 45, "大理石": 90, "墙布": 30, "墙纸": 30,
+                           "壁纸": 30, "木饰面": 90, "岩板": 120, "护墙板": 90}
+            for kw, price in wall_premium.items():
+                if kw in wall_mat:
+                    material_diff += space_area * 0.6 * (price - WALL_BASE)
+                    break
+            # 地面材质差价（相对于基础地砖铺贴45元/㎡）
+            FLOOR_BASE = 45
+            floor_premium = {"实木地板": 120, "复合地板": 60, "地板": 60,
+                           "大理石": 260, "地毯": 80, "岩板": 200}
+            for kw, price in floor_premium.items():
+                if kw in floor_mat:
+                    material_diff += space_area * 0.3 * (price - FLOOR_BASE)
+                    break
+            # 顶面材质差价（相对于基础石膏板吊顶60元/㎡）
+            CEIL_BASE = 60
+            ceil_premium = {"铝扣板": 50, "蜂窝大板": 100, "集成吊顶": 50,
+                          "木饰面": 100, "造型吊顶": 80, "格栅吊顶": 80}
+            for kw, price in ceil_premium.items():
+                if kw in ceiling_mat:
+                    diff = price - CEIL_BASE
+                    if diff > 0:
+                        material_diff += space_area * 1.0 * diff
 
         loss_price = base_price * loss_rate
         process_add_price = total_area * 5  # 基础造型费
