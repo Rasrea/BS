@@ -25,7 +25,8 @@
       <p class="text-xs font-medium text-gray-500 mb-2">已选择 {{ pendingFiles.length }} 张效果图</p>
       <div class="flex flex-wrap gap-2">
         <div v-for="(f, i) in pendingFiles" :key="'pending-'+i"
-             class="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0">
+             class="relative w-20 h-20 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+             @click="enlargeImage(f.preview)">
           <img :src="f.preview" class="w-full h-full object-cover" />
           <button class="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] leading-none flex items-center justify-center hover:bg-red-600"
                   @click.stop="removePending(i)">×</button>
@@ -131,7 +132,7 @@ function onDrop(e) { dragging.value = false; addFiles(e.dataTransfer.files) }
 
 function addFiles(fileList) {
   if (queueRunning.value) return
-  const allowed = ['.jpg', '.jpeg', '.png', '.webp']
+  const allowed = ['jpg', 'jpeg', 'png', 'webp']
   for (const f of fileList) {
     const ext = f.name.split('.').pop().toLowerCase()
     if (!allowed.includes(ext)) continue

@@ -28,14 +28,17 @@
       </div>
       <p class="text-sm font-medium text-green-700 break-all">{{ file.name }}</p>
       <p class="text-xs text-gray-400 mt-1">{{ formatSize(file.size) }}</p>
-      <button class="mt-2 text-xs text-red-500 hover:text-red-700 underline" @click.stop="remove">移除</button>
+      <div class="flex items-center gap-2 mt-2">
+        <button v-if="file.name.toLowerCase().endsWith('.dxf')" class="preview-btn" @click.stop="preview">🔍 预览</button>
+        <button class="text-xs text-red-500 hover:text-red-700 underline" @click.stop="remove">移除</button>
+      </div>
     </template>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-const emit = defineEmits(['file-change'])
+const emit = defineEmits(['file-change', 'preview'])
 const file = ref(null)
 const dragging = ref(false)
 const input = ref(null)
@@ -55,5 +58,40 @@ function setFile(f) {
   file.value = f
   emit('file-change', f)
 }
+function preview() {
+  if (file.value) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      emit('preview', { name: file.value.name, buffer: e.target.result })
+    }
+    reader.readAsArrayBuffer(file.value)
+  }
+}
 function remove() { file.value = null; emit('file-change', null) }
+
+// Add preview button style
+const style = document.createElement('style')
+style.textContent = `
+  .preview-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 14px;
+    border: 1px solid #6366f1;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+  }
+  .preview-btn:hover {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+  }
+`
+document.head.appendChild(style)
 </script>

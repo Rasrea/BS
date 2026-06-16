@@ -134,7 +134,7 @@
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
-            <CadUploader @file-change="onCadFileChange" />
+            <CadUploader @file-change="onCadFileChange" @preview="onCadPreview" />
             <!-- CAD预览 -->
             <div v-if="cadPreviewUrl && uploadMode==='single'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
               <p class="text-xs text-gray-500 mb-1">📐 CAD文件: {{ cadFile?.name }}</p>
@@ -153,12 +153,15 @@
           <div>
             <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
             <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
-            <CadBatchUploader v-else-if="uploadMode==='cad_batch'" @results-update="onCadBatchResults" />
+            <CadBatchUploader v-else-if="uploadMode==='cad_batch'" @results-update="onCadBatchResults" @preview="onCadPreview" />
             <div v-else-if="uploadMode==='pdf'" class="card">
               <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
               <input type="file" accept=".pdf" @change="onPdfFileChange"
                      class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
-              <p v-if="pdfFile" class="text-xs text-green-600 mt-2">✅ {{ pdfFile.name }}</p>
+              <p v-if="pdfFile" class="text-xs text-green-600 mt-2 flex items-center gap-2">
+                ✅ {{ pdfFile.name }}
+                <button class="text-indigo-500 hover:text-indigo-700 font-medium" @click="previewPdf">🔍 预览</button>
+              </p>
               <button v-if="pdfFile && !pdfLoading" class="btn-primary text-xs mt-3" @click="startPdfAnalysis">
                 🚀 识别PDF
               </button>
@@ -290,6 +293,13 @@
       </div>
     </main>
 
+    <!-- 全屏 CAD 预览 -->
+    <Teleport to="body">
+      <div v-if="showCadPreview" class="cad-preview-overlay">
+        <CadViewer ref="cadViewerRef" :file="cadPreviewFile" @close="closeCadPreview" />
+      </div>
+    </Teleport>
+
     <!-- Footer -->
     <footer class="mt-8 py-4 border-t border-gray-200">
       <div class="max-w-7xl mx-auto px-4 text-center text-xs text-gray-400">
@@ -318,6 +328,7 @@ import VisionTestPanel from './components/VisionTestPanel.vue'
 import CadBatchUploader from './components/CadBatchUploader.vue'
 import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
+import CadViewer from './components/CadViewer.vue'
 
 const tabs = [
   { key: 'home', label: '📐 图纸分析' },
@@ -363,6 +374,11 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 const cadPreviewUrl = ref('')
 const imagePreviewUrl = ref('')
 const cadSpaces = ref([])
+
+// CAD 图纸预览（全屏）
+const showCadPreview = ref(false)
+const cadPreviewFile = ref(null)
+const cadViewerRef = ref(null)
 
 // ⏳ 启动加载
 const appLoading = ref(true)
@@ -507,6 +523,18 @@ async function clearFiles() {
   progressSteps.value = []
 }
 
+// CAD 图纸预览
+function onCadPreview(fileData) {
+  cadPreviewFile.value = fileData
+  showCadPreview.value = true
+}
+function closeCadPreview() {
+  // 先显式销毁引擎，再隐藏 overlay
+  try { cadViewerRef.value?.cleanup?.() } catch (e) {}
+  showCadPreview.value = false
+  cadPreviewFile.value = null
+}
+
 async function startAnalysis() {
   loading.value = true
   progressSteps.value = []
@@ -587,6 +615,12 @@ function onPdfFileChange(e) {
   pdfFile.value = e.target.files[0] || null
 }
 
+function previewPdf() {
+  if (!pdfFile.value) return
+  const url = URL.createObjectURL(pdfFile.value)
+  window.open(url, '_blank')
+}
+
 async function startPdfAnalysis() {
   if (!pdfFile.value) return
   pdfLoading.value = true
@@ -601,3 +635,16 @@ async function startPdfAnalysis() {
   }
 }
 </script>
+
+<style>
+.cad-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  animation: cad-fade-in 0.2s ease-out;
+}
+@keyframes cad-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+</style>

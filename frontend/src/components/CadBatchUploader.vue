@@ -29,6 +29,8 @@
           <span class="text-blue-500">📐</span>
           <span class="flex-1 truncate">{{ f.file.name }}</span>
           <span class="text-gray-400">{{ formatSize(f.file.size) }}</span>
+          <button v-if="!queueRunning && f.file.name.toLowerCase().endsWith('.dxf')" class="text-indigo-500 hover:text-indigo-700 font-medium px-1"
+                  @click.stop="previewFile(f.file)">🔍</button>
           <button v-if="!queueRunning" class="text-red-400 hover:text-red-600 ml-1"
                   @click.stop="removePending(i)">×</button>
         </div>
@@ -153,7 +155,7 @@
 import { ref, computed } from 'vue'
 import API from '../services/api.js'
 
-const emit = defineEmits(['results-update'])
+const emit = defineEmits(['results-update', 'preview'])
 
 const dragging = ref(false)
 const input = ref(null)
@@ -230,6 +232,17 @@ function clearAll() {
   results.value = []
   queueError.value = ''
   lastStepTime.value = ''
+}
+
+function previewFile(file) {
+  const reader = new FileReader()
+  reader.onload = () => {
+    emit('preview', { name: file.name, buffer: reader.result })
+  }
+  reader.onerror = () => {
+    console.error('[CadBatchUploader] 文件读取失败:', file.name)
+  }
+  reader.readAsArrayBuffer(file)
 }
 
 async function startQueue() {
