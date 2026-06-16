@@ -64,6 +64,30 @@ export const API = {
       return data
     } catch (e) { return handleError(e) }
   },
+  // === Excel文件下载（blob二进制流） ===
+  async downloadExcelBlob(quoteId) {
+    try {
+      const { data, headers } = await api.get(`/download_excel/${quoteId}`, {
+        responseType: 'blob',
+        timeout: 60000,
+      })
+      const disposition = headers['content-disposition'] || ''
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s]+)/i) || disposition.match(/filename=([^;\s]+)/i)
+      const filename = match ? decodeURIComponent(match[1]) : `报价单_${quoteId}.xlsx`
+      // 触发浏览器下载
+      const url = window.URL.createObjectURL(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      return { success: true, message: '下载成功', filename }
+    } catch (e) {
+      return { success: false, message: e.response?.data?.detail || e.message || '下载失败' }
+    }
+  },
 
   // === 历史记录 (接口5-7) ===
   async getHistory(page = 1, pageSize = 20) {

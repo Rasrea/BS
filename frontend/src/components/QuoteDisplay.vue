@@ -267,7 +267,7 @@ function cancelEdits() {
 async function saveEdits() {
   saving.value = true
   saveResult.value = null
-  const quoteId = props.data?.data?.quote_id
+  const quoteId = props.data?.data?.quote_id || props.data?.data?.id
   if (!quoteId) {
     saveResult.value = { success: false, message: '缺少报价ID' }
     saving.value = false
@@ -287,9 +287,9 @@ async function saveEdits() {
 async function doExport() {
   exporting.value = true
   exportResult.value = null
-  const quoteId = props.data?.data?.quote_id
+  const quoteId = props.data?.data?.quote_id || props.data?.data?.id
   if (!quoteId) { exportResult.value = { success: false, message: '缺少报价ID' }; exporting.value = false; return }
-  const res = await API.exportExcel(quoteId)
+  const res = await API.downloadExcelBlob(quoteId)
   exportResult.value = res
   exporting.value = false
 }

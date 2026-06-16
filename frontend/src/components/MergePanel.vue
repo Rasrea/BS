@@ -141,6 +141,10 @@ const mergeResult = ref(null)
 const mergeError = ref('')
 const bindings = ref([{ cad_space_name: '', material_desc: '' }])
 
+// 空间列表
+const spaces = ref([])
+const spacesLoading = ref(false)
+
 // 自动匹配建议
 const loadingSuggestions = ref(false)
 const suggestionMatches = ref([])
@@ -150,6 +154,9 @@ const confirmingMatch = ref({})   // { "imageId-cadId": true }
 const cadBindingOptions = computed(() => bindings.value.map((_, i) => i))
 
 const currentCadSpaces = computed(() => {
+  // 优先从实时加载的空间列表取
+  if (spaces.value.length > 0) return spaces.value
+  // 备选：从CAD结果中提取
   const cad = cadResults.value.find(r => r.id === selectedCadId.value)
   return cad?.detail_json?.spaces || cad?.spaces || []
 })
@@ -176,27 +183,44 @@ function addBinding() { bindings.value.push({ cad_space_name: '', material_desc:
 function removeBinding(idx) { bindings.value.splice(idx, 1) }
 
 async function loadResults() {
-  // 只取最近3条报价记录，避免出现历史测试数据
-  const h = await API.getHistory(1, 3)
-  if (h.success && h.data?.quotes?.items) {
-    const seen = new Set()
-    h.data.quotes.items.forEach(q => {
-      if (q.cad_result_id && !seen.has(q.cad_result_id)) {
-        seen.add(q.cad_result_id)
-        cadResults.value.push({
-          id: q.cad_result_id,
-          drawing_name: q.project_name || q.drawing_name,
-          space_count: q.space_count,
-          detail_json: q.cad_detail_json || q.detail_json,
-        })
-      }
-    })
-    // 自动选中最新一条
-    if (cadResults.value.length > 0 && !selectedCadId.value) {
-      selectedCadId.value = cadResults.value[0].id
+  // 加载所有已解析CAD图纸（不限量）
+  try {
+    const drawingsRes = await API.get('/drawings')
+    if (drawingsRes.success && Array.isArray(drawingsRes.data)) {
+      const parsed = drawingsRes.data.filter(d => d.parse_status === 'completed' && d.cad_result_json)
+      cadResults.value = parsed.map(d => ({
+        id: d.id,
+        drawing_name: d.filename || ('图纸#' + d.id),
+        space_count: d.cad_result_json?.space_count || d.cad_result_json?.spaces_count || d.space_count || 0,
+        detail_json: d.cad_result_json,
+        total_area: d.cad_result_json?.total_area || d.total_area || 0,
+      }))
+    }
+  } catch (e) {}
+  // 如果没从drawings取到，回退到从历史记录取
+  if (cadResults.value.length === 0) {
+    const h = await API.getHistory(1, 50)
+    if (h.success && h.data?.quotes?.items) {
+      const seen = new Set()
+      h.data.quotes.items.forEach(q => {
+        if (q.cad_result_id && !seen.has(q.cad_result_id)) {
+          seen.add(q.cad_result_id)
+          cadResults.value.push({
+            id: q.cad_result_id,
+            drawing_name: q.project_name || ('图纸#' + q.cad_result_id),
+            space_count: q.space_count || 0,
+            detail_json: q.cad_detail_json || q.detail_json,
+          })
+        }
+      })
     }
   }
-  // 图片结果也从最近3条取
+  // 自动选中最新一条
+  if (cadResults.value.length > 0 && !selectedCadId.value) {
+    selectedCadId.value = cadResults.value[0].id
+    await loadSpaces()
+  }
+  // 图片结果也从历史记录取
   try {
     const resp = await fetch('/api/history?page=1&page_size=3')
     const body = await resp.json()
@@ -222,7 +246,44 @@ async function loadResults() {
   } catch(e) {}
 }
 
+async function loadSpaces() {
+  if (!selectedCadId.value) return
+  spacesLoading.value = true
+  try {
+    // 先尝试获取分层明细
+    const res = await API.getBreakdown(parseInt(selectedCadId.value))
+    if (res.success && res.data?.spaces) {
+      spaces.value = res.data.spaces.map(s => ({
+        id: s.id || s.space_id,
+        name: s.space_name || ('未命名#' + (s.id || 0)),
+        area: s.area || 0,
+      }))
+    } else {
+      // 回退：从CAD结果JSON提取
+      const cad = cadResults.value.find(r => r.id === selectedCadId.value)
+      const raw = cad?.detail_json?.spaces || cad?.spaces || []
+      spaces.value = raw.map((s, i) => ({
+        id: s.id || i,
+        name: s.name || s.space_name || ('未命名#' + (s.id || i)),
+        area: s.area || s.area_sqm || 0,
+      }))
+    }
+  } catch (e) {
+    spaces.value = []
+  }
+  spacesLoading.value = false
+}
+
 onMounted(loadResults)
+
+// 当选中的CAD变更时加载空间列表
+watch(selectedCadId, async (newId) => {
+  if (newId) {
+    await loadSpaces()
+  } else {
+    spaces.value = []
+  }
+})
 
 // 当选择变更时自动触发匹配建议
 watch([selectedCadId, selectedImageIds], async ([newCadId, newImgIds]) => {

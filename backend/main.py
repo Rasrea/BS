@@ -1166,6 +1166,51 @@ async def export_excel(
         await task_state.release()
 
 
+@app.get("/api/download_excel/{quote_id}")
+async def download_excel(quote_id: int):
+    """直接返回Excel文件二进制流供前端下载"""
+    quote = await db.get_quote(quote_id)
+    if not quote:
+        return err(422, "报价记录不存在")
+    filepath = quote.get("export_filepath") or quote.get("export_path") or ""
+    if not filepath or not os.path.exists(filepath):
+        # 尝试重新生成
+        try:
+            ok_flag, tid = await task_state.acquire("export")
+            if not ok_flag:
+                return err(409, "系统正忙，请稍后重试")
+            cad_rows = await db.get_cad_results(quote.get("cad_result_id", 0))
+            excel_data = {
+                "project_name": quote.get("project_name", "智能报价单"),
+                "create_time": quote.get("create_time", ""),
+                "rule_version": "v1.0",
+                "base_price": quote.get("base_price", 0),
+                "material_diff_price": quote.get("material_diff_price", 0),
+                "process_add_price": quote.get("process_add_price", 0),
+                "loss_price": quote.get("loss_price", 0),
+                "manage_fee": quote.get("manage_fee", 0),
+                "tax_fee": quote.get("tax_fee", 0),
+                "final_price": quote.get("final_price", 0),
+                "items": quote.get("quote_detail_json", []),
+                "cad_data": cad_rows,
+                "material_data": [],
+            }
+            img_ids = quote.get("image_result_ids", [])
+            if img_ids:
+                img_rows = await db.get_image_results(img_ids)
+                excel_data["material_data"] = [{"space_name": r.get("recognized_space", ""), "material_info": r.get("material_info", {}), "confidence": r.get("confidence", 0)} for r in img_rows]
+            filepath = export_quote_excel(excel_data)
+            await db.update_quote_export(quote_id, filepath)
+        except Exception as e:
+            return err(500, f"生成Excel失败: {str(e)}")
+        finally:
+            await task_state.release()
+    if not os.path.exists(filepath):
+        return err(500, "Excel文件不存在，生成失败")
+    filename = Path(filepath).name
+    return FileResponse(filepath, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 # ─────────────────── 接口：历史记录 ───────────────────
 
 @app.get("/api/history")

@@ -104,8 +104,10 @@ function toggleDetail(id) {
 }
 
 async function doExport(quoteId) {
-  const res = await API.exportExcel(quoteId)
-  alert(res.success ? `导出成功：${res.data?.file_path || ''}` : `导出失败：${res.message}`)
+  const res = await API.downloadExcelBlob(quoteId)
+  if (!res.success) {
+    alert('导出失败：' + res.message)
+  }
 }
 
 async function confirmDelete(quoteId) {
