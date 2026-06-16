@@ -1,5 +1,19 @@
 <template>
   <div class="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+    <!-- ⏳ 启动加载遮罩 -->
+    <div v-if="appLoading" class="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[999]"
+         style="position:fixed;top:0;left:0;right:0;bottom:0;">
+      <div class="text-center max-w-sm">
+        <svg class="animate-spin w-12 h-12 mx-auto text-primary-500 mb-4" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+        </svg>
+        <p class="text-sm font-medium text-gray-700" v-if="!appLoadingError">正在连接后端服务...</p>
+        <p class="text-sm font-medium text-red-600" v-else>{{ appLoadingError }}</p>
+        <p class="text-xs text-gray-400 mt-2" v-if="!appLoadingError">请确保后端服务已启动（端口 8100）</p>
+        <button v-if="appLoadingError" class="btn-primary text-sm mt-4" @click="retryConnect">🔄 重试连接</button>
+      </div>
+    </div>
     <!-- Header -->
     <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
@@ -350,6 +364,22 @@ const cadPreviewUrl = ref('')
 const imagePreviewUrl = ref('')
 const cadSpaces = ref([])
 
+// ⏳ 启动加载
+const appLoading = ref(true)
+const appLoadingError = ref('')
+async function retryConnect() {
+  appLoadingError.value = ''
+  appLoading.value = true
+  try {
+    sysStatus.value = (await API.getStatus()).data || null
+    await loadVlModels()
+  } catch (e) {
+    appLoadingError.value = '❌ 后端连接失败: ' + (e.message || '网络异常，请确认后端已启动')
+  } finally {
+    setTimeout(() => { appLoading.value = false }, 400)
+  }
+}
+
 // 流水步骤
 const cadDone = ref(false)
 const imgDone = ref(false)
@@ -370,8 +400,15 @@ const vlMsg = ref('')
 const vlMsgType = ref('success')
 
 onMounted(async () => {
-  sysStatus.value = (await API.getStatus()).data || null
-  await loadVlModels()
+  appLoading.value = true
+  try {
+    sysStatus.value = (await API.getStatus()).data || null
+    await loadVlModels()
+  } catch (e) {
+    appLoadingError.value = '❌ 后端连接失败: ' + (e.message || '网络异常')
+  } finally {
+    setTimeout(() => { appLoading.value = false }, 400)
+  }
 })
 
 async function loadVlModels() {
@@ -452,7 +489,11 @@ function onCadBatchResults(results) {
   }
 }
 
-function clearFiles() {
+async function clearFiles() {
+  // 后端同步删除临时文件
+  try {
+    await API.post('/upload/clear', {})
+  } catch (e) { /* 静默处理 */ }
   cadFile.value = null
   imageFile.value = null
   cadResult.value = null

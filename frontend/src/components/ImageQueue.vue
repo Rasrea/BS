@@ -65,9 +65,10 @@
     <!-- 结果列表 -->
     <div v-if="results.length > 0" class="space-y-2">
       <div v-for="(r, i) in results" :key="'result-'+i"
-           class="card !p-3 flex items-start gap-3"
-           :class="r.success ? 'border-green-200' : 'border-red-200'">
-        <div class="w-12 h-12 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 bg-gray-50">
+           class="card !p-3 flex items-start gap-3 cursor-pointer hover:bg-gray-50/50"
+           :class="r.success ? 'border-green-200' : 'border-red-200'"
+           @click="enlargeImage(r.preview)">
+        <div class="w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 bg-gray-50">
           <img :src="r.preview" class="w-full h-full object-cover" />
         </div>
         <div class="flex-1 min-w-0">
@@ -88,6 +89,17 @@
       </div>
     </div>
   </div>
+
+  <!-- 图片预览放大 -->
+  <div v-if="lightbox.show"
+       class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+       @click.self="lightbox.show = false">
+    <div class="relative max-w-[90vw] max-h-[90vh]">
+      <img :src="lightbox.url" class="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" />
+      <button class="absolute -top-3 -right-3 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center text-gray-600 hover:text-gray-900 text-sm font-bold"
+              @click="lightbox.show = false">✕</button>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -103,6 +115,12 @@ const queueRunning = ref(false)
 const currentProcessing = ref(null)
 const queueError = ref('')
 const results = ref([])          // {success, filename, preview, ...}
+
+// 图片放大预览
+const lightbox = ref({ show: false, url: '' })
+function enlargeImage(url) {
+  lightbox.value = { show: true, url }
+}
 
 const finishedCount = computed(() => results.value.length)
 const totalCount = computed(() => pendingFiles.value.length + results.value.length)

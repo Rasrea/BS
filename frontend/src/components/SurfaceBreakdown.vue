@@ -317,12 +317,12 @@ onMounted(async () => {
 async function loadLatestDrawing() {
   const res = await API.get('/drawings')
   if (res.success && Array.isArray(res.data)) {
-    // 只取最新的一个，自动选中
-    if (res.data.length > 0) {
-      const latest = res.data[0]
-      drawings.value = [latest]
-      selectedDrawingId.value = latest.id
-      // 自动计算并加载分层数据
+    // 取所有已解析CAD的图纸，按时间倒序
+    const parsed = res.data.filter(d => d.parse_status === 'completed' && d.cad_result_json)
+    if (parsed.length > 0) {
+      drawings.value = parsed
+      // 默认选中第一个（最新）
+      selectedDrawingId.value = parsed[0].id
       await computeAndFetch()
     }
   }

@@ -71,6 +71,7 @@
           <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
           <div class="flex items-center gap-2">
             <input v-model.number="item.editValue" type="number" step="0.01" min="0" max="1"
+                   @input="item.sliderValue = Math.round(item.editValue * 100 / 5) * 5"
                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
             <span class="text-xs text-gray-400">{{ (item.editValue * 100).toFixed(0) }}%</span>
             <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"

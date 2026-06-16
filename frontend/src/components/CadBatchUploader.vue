@@ -35,6 +35,55 @@
       </div>
     </div>
 
+    <!-- 🖼️ 效果图上传（配套） -->
+    <div class="border-t border-gray-200 pt-4 mt-4">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="w-1 h-4 bg-purple-500 rounded-full"></span>
+        <span class="text-xs font-semibold text-gray-600">🖼️ 效果图上传（配套）</span>
+        <span class="text-[10px] text-gray-400">可多选，与CAD图纸配套使用</span>
+      </div>
+      <div
+        class="upload-zone"
+        :class="{ active: imgDragging }"
+        @dragover.prevent="imgDragging = true"
+        @dragleave="imgDragging = false"
+        @drop.prevent="onImgDrop"
+        @click="selectImgFile"
+      >
+        <input ref="imgInput" type="file" accept=".jpg,.jpeg,.png,.webp" multiple class="hidden" @change="onImgSelect" />
+        <div class="w-12 h-12 mx-auto mb-2 rounded-2xl bg-purple-50 flex items-center justify-center">
+          <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+        <p class="text-sm font-medium text-gray-700">上传效果图</p>
+        <p class="text-xs text-gray-400 mt-1">支持 .jpg / .png / .webp，可多选</p>
+      </div>
+
+      <!-- 效果图缩略图预览 -->
+      <div v-if="imageFiles.length > 0" class="flex flex-wrap gap-2 mt-3">
+        <div v-for="(img, i) in imageFiles" :key="'img-'+i"
+             class="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
+             @click="enlargeImg(img.preview)">
+          <img :src="img.preview" class="w-full h-full object-cover" />
+          <button class="absolute top-0.5 right-0.5 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] leading-none flex items-center justify-center hover:bg-red-600"
+                  @click.stop="removeImg(i)">×</button>
+        </div>
+      </div>
+
+      <!-- 图片放大预览 -->
+      <div v-if="imgLightbox.show"
+           class="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+           @click.self="imgLightbox.show = false">
+        <div class="relative max-w-[90vw] max-h-[90vh]">
+          <img :src="imgLightbox.url" class="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" />
+          <button class="absolute -top-3 -right-3 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center text-gray-600 hover:text-gray-900 text-sm font-bold"
+                  @click="imgLightbox.show = false">✕</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 项目名称 -->
     <div class="card !p-3 mb-3">
       <label class="text-xs text-gray-500 block mb-1">项目名称（可选）</label>
@@ -115,6 +164,37 @@ const queueError = ref('')
 const results = ref([])
 const projectName = ref('装修工程')
 const lastStepTime = ref('')
+
+// 效果图相关
+const imgDragging = ref(false)
+const imgInput = ref(null)
+const imageFiles = ref([])
+const imgLightbox = ref({ show: false, url: '' })
+
+function enlargeImg(url) {
+  imgLightbox.value = { show: true, url }
+}
+
+function selectImgFile() { imgInput.value?.click() }
+function onImgSelect(e) { addImgFiles(e.target.files) }
+function onImgDrop(e) { imgDragging.value = false; addImgFiles(e.dataTransfer.files) }
+
+function addImgFiles(fileList) {
+  const allowed = ['jpg', 'jpeg', 'png', 'webp']
+  for (const f of fileList) {
+    const ext = f.name.split('.').pop().toLowerCase()
+    if (!allowed.includes(ext)) continue
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      imageFiles.value.push({ file: f, preview: e.target.result })
+    }
+    reader.readAsDataURL(f)
+  }
+}
+
+function removeImg(idx) {
+  imageFiles.value.splice(idx, 1)
+}
 
 const finishedCount = computed(() => results.value.length)
 const totalCount = computed(() => pendingFiles.value.length + results.value.length)

@@ -387,6 +387,30 @@ async def analyze_full(
     return ok(result, task_status=STATE_IDLE, trace_id=tid)
 
 
+# ─────────────────── 接口：清理临时上传文件 ───────────────────
+
+@app.post("/api/upload/clear")
+async def upload_clear():
+    """清空前端未提交的临时上传文件"""
+    if task_state.state != STATE_IDLE:
+        return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+    import time
+    now = time.time()
+    deleted = 0
+    for f in UPLOAD_DIR.iterdir():
+        if f.is_file() and f.suffix.lower() in ('.dxf', '.dwg', '.jpg', '.jpeg', '.png', '.webp'):
+            fname = f.name
+            # 只删文件名不含数据库记录ID标记的临时文件（上传但未解析的）
+            if not any(id_prefix in fname for id_prefix in ['_cad', '_img', '_test', '_processed']):
+                f.unlink(missing_ok=True)
+                deleted += 1
+            # 也删掉被reset标记的临时文件
+            elif fname.startswith('temp_'):
+                f.unlink(missing_ok=True)
+                deleted += 1
+    return ok({"deleted_count": deleted})
+
+
 # ─────────────────── 接口：效果图识别（接口2） ───────────────────
 
 @app.post("/api/analyze")
