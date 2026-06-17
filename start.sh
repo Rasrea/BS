@@ -13,7 +13,7 @@ BACKEND_DIR="$ROOT_DIR/backend"
 PORT=8100
 
 echo "╔══════════════════════════════════════╗"
-echo "║   BuildSight  V1.0.3                  ║"
+echo "║   BuildSight  V1.0.4                  ║"
 echo "║   家装智能自动报价系统              ║"
 echo "╠══════════════════════════════════════╣"
 echo "║  CAD解析 · AI识别 · 融合报价 · 导出 ║"
