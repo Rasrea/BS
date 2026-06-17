@@ -1229,6 +1229,11 @@ async def download_excel(quote_id: int):
     if not os.path.exists(filepath):
         return err(500, "Excel文件不存在，生成失败")
     filename = Path(filepath).name
+    # 记录导出日志
+    try:
+        await db.add_log("export", operation_action=f"文件下载: quote_id={quote_id}, 文件={filename}", lock_status="idle", run_status="success")
+    except:
+        pass
     return FileResponse(filepath, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
