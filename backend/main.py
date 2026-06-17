@@ -150,7 +150,7 @@ def err(code: int, message: str, data=None, task_status=None, trace_id="") -> di
 
 # ─────────────────── 门禁工具函数 ───────────────────
 
-ALLOWED_CAD_EXT = {".dxf", ".dwg"}
+ALLOWED_CAD_EXT = {".dxf", ".dwg", ".pdf"}
 ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"}
 ALLOWED_PDF_EXT = {".pdf"}
 MAX_CAD_SIZE = 120 * 1024 * 1024   # 120MB
@@ -317,13 +317,15 @@ async def analyze_full(
     project_name: str = Form("装修工程"),
 ):
     """
-    接口1：纯DXF矢量解析 + 报价
-    入参：cad_file=@xxx.dxf
+    接口1：CAD 文件解析 + 报价
+    入参：cad_file=@xxx.dxf / @xxx.dwg / @xxx.pdf
     能力：解析空间、精准算量、自动报价
+        - .dxf/.dwg → 矢量解析 (ezdxf)
+        - .pdf     → 矢量路径解析 (优先) / 视觉识别 (回退)
     状态约束：仅idle可调用，占用cad_running锁
     """
     if not cad_file:
-        return err(400, "请上传CAD文件（.dxf）")
+        return err(400, "请上传CAD文件（.dxf/.dwg/.pdf）")
 
     check_mixed_request(cad_file, None)
 
@@ -334,9 +336,30 @@ async def analyze_full(
     save_path = UPLOAD_DIR / f"{task_id}_cad{ext}"
     save_path.write_bytes(content)
 
-    # 安全执行
-    from cad_parser import _parse_dxf
-    data, tid, error = await safe_run("cad", TIMEOUT_CAD, _parse_dxf, str(save_path))
+    # PDF 路径：矢量解析（优先）+ 视觉识别（回退）
+    if ext == ".pdf":
+        from pdf_parser import parse_pdf_vector
+        from cad_parser import _parse_cad_pdf
+
+        data, tid, error = await safe_run("cad", TIMEOUT_CAD, parse_pdf_vector, str(save_path))
+
+        # 回退条件：矢量数为0 或 解析出错且无数据
+        need_fallback = error or (data and data.get("vector_count", 0) == 0 and not data.get("spaces"))
+        if need_fallback:
+            fb_data, _, fb_error = await safe_run("cad", TIMEOUT_CAD, _parse_cad_pdf, str(save_path))
+            if fb_error:
+                return err(504, "PDF解析失败（矢量+视觉回退均失败）: " + fb_error, task_status=STATE_IDLE)
+            if fb_data and fb_data.get("spaces"):
+                data = fb_data
+                data["parse_method"] = "PDF→图片→视觉识别（矢量回退）"
+
+        if error and not data:
+            return err(504, "PDF解析失败: " + error, task_status=STATE_IDLE)
+
+    # DXF/DWG 路径（原有逻辑，完全不变）
+    else:
+        from cad_parser import _parse_dxf
+        data, tid, error = await safe_run("cad", TIMEOUT_CAD, _parse_dxf, str(save_path))
 
     if error:
         return err(504, f"CAD解析失败: {error}", task_status=STATE_IDLE)

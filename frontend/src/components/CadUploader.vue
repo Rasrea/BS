@@ -7,7 +7,7 @@
     @drop.prevent="onDrop"
     @click="selectFile"
   >
-    <input ref="input" type="file" accept=".dxf,.dwg" class="hidden" @change="onSelect" />
+    <input ref="input" type="file" accept=".dxf,.dwg,.pdf" class="hidden" @change="onSelect" />
     <template v-if="!file">
       <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center">
         <svg class="w-7 h-7 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -16,7 +16,7 @@
         </svg>
       </div>
       <p class="text-sm font-medium text-gray-700">上传 CAD 图纸</p>
-      <p class="text-xs text-gray-400 mt-1">仅支持 .dxf / .dwg 格式</p>
+      <p class="text-xs text-gray-400 mt-1">支持 .dxf / .dwg / .pdf 格式</p>
       <p class="text-xs text-gray-400 mt-1">拖拽或点击选择文件</p>
     </template>
     <template v-else>
@@ -54,7 +54,7 @@ function onDrop(e) { dragging.value = false; setFile(e.dataTransfer.files[0]) }
 function setFile(f) {
   if (!f) return
   const ext = f.name.split('.').pop().toLowerCase()
-  if (!['dxf', 'dwg'].includes(ext)) { alert('仅支持 .dxf / .dwg 格式'); return }
+  if (!['dxf', 'dwg', 'pdf'].includes(ext)) { alert('仅支持 .dxf / .dwg / .pdf 格式'); return }
   file.value = f
   emit('file-change', f)
 }

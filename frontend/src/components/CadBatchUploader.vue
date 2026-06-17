@@ -9,7 +9,7 @@
       @drop.prevent="onDrop"
       @click="selectFile"
     >
-      <input ref="input" type="file" accept=".dxf,.dwg" multiple class="hidden" @change="onSelect" />
+      <input ref="input" type="file" accept=".dxf,.dwg,.pdf" multiple class="hidden" @change="onSelect" />
       <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-blue-50 flex items-center justify-center">
         <svg class="w-7 h-7 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
@@ -17,7 +17,7 @@
         </svg>
       </div>
       <p class="text-sm font-medium text-gray-700">上传 CAD 图纸（可多选）</p>
-      <p class="text-xs text-gray-400 mt-1">支持 .dxf / .dwg，可多张（串行处理）</p>
+      <p class="text-xs text-gray-400 mt-1">支持 .dxf / .dwg / .pdf，可多张（串行处理）</p>
     </div>
 
     <!-- 文件列表（已选未处理） -->
@@ -29,7 +29,7 @@
           <span class="text-blue-500">📐</span>
           <span class="flex-1 truncate">{{ f.file.name }}</span>
           <span class="text-gray-400">{{ formatSize(f.file.size) }}</span>
-          <button v-if="!queueRunning && f.file.name.toLowerCase().endsWith('.dxf')" class="text-indigo-500 hover:text-indigo-700 font-medium px-1"
+          <button v-if="!queueRunning && (f.file.name.toLowerCase().endsWith('.dxf') || f.file.name.toLowerCase().endsWith('.pdf'))" class="text-indigo-500 hover:text-indigo-700 font-medium px-1"
                   @click.stop="previewFile(f.file)">🔍</button>
           <button v-if="!queueRunning" class="text-red-400 hover:text-red-600 ml-1"
                   @click.stop="removePending(i)">×</button>
@@ -182,7 +182,7 @@ function onImgSelect(e) { addImgFiles(e.target.files) }
 function onImgDrop(e) { imgDragging.value = false; addImgFiles(e.dataTransfer.files) }
 
 function addImgFiles(fileList) {
-  const allowed = ['jpg', 'jpeg', 'png', 'webp']
+  const allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf']
   for (const f of fileList) {
     const ext = f.name.split('.').pop().toLowerCase()
     if (!allowed.includes(ext)) continue
@@ -213,7 +213,7 @@ function onDrop(e) { dragging.value = false; addFiles(e.dataTransfer.files) }
 
 function addFiles(fileList) {
   if (queueRunning.value) return
-  const allowed = ['dxf', 'dwg']
+  const allowed = ['dxf', 'dwg', 'pdf']
   for (const f of fileList) {
     const ext = f.name.split('.').pop().toLowerCase()
     if (!allowed.includes(ext)) continue
