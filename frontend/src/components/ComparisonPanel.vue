@@ -141,10 +141,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject, watch } from 'vue'
 import API from '../services/api.js'
 
 const emit = defineEmits(['rename-space'])
+
+const refreshKey = inject('refreshKey', ref(0))
 
 const drawings = ref([])
 const selectedDrawingId = ref('')
@@ -193,6 +195,14 @@ const paginatedRows = computed(() => {
 })
 
 onMounted(async () => {
+  const res = await API.get('/drawings')
+  if (res.success && Array.isArray(res.data)) {
+    drawings.value = res.data
+  }
+})
+
+// 🌟 当 App 中分析完成时自动重新加载图纸列表
+watch(refreshKey, async () => {
   const res = await API.get('/drawings')
   if (res.success && Array.isArray(res.data)) {
     drawings.value = res.data

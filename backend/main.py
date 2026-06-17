@@ -943,6 +943,15 @@ async def data_merge(
         for img in image_rows:
             await db.update_image_confirm(img["id"], "confirmed")
 
+        # 记录操作日志
+        await db.add_log(
+            task_type="merge",
+            operation_action=f"数据融合: quote_id={quote_id}, cad_result_id={cad_result_id}, {len(cad_rows)}个空间, 总计¥{final_price:.0f}",
+            lock_status="idle",
+            trace_id=tid,
+            run_status="success",
+        )
+
         return ok({
             "quote_id": quote_id,
             "base_price": round(base_price, 2),
@@ -1155,6 +1164,15 @@ async def export_excel(
 
         # 更新导出路径
         await db.update_quote_export(quote_id, filepath)
+
+        # 记录操作日志
+        await db.add_log(
+            task_type="export",
+            operation_action=f"Excel导出: quote_id={quote_id}, 文件={Path(filepath).name}",
+            lock_status="idle",
+            trace_id=tid,
+            run_status="success",
+        )
 
         return ok({
             "quote_id": quote_id,

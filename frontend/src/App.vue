@@ -121,13 +121,12 @@
             :class="uploadMode==='multi' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
             多张队列
           </button>
-          <button @click="uploadMode='pdf'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-            :class="uploadMode==='pdf' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
-            📄 PDF识别
-          </button>
-          <button @click="uploadMode='cad_batch'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-            :class="uploadMode==='cad_batch' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
-            📐 CAD批量
+          <span v-if="uploadMode==='single'" class="text-xs text-gray-300 mx-1">|</span>
+          <button v-if="uploadMode==='single'"
+                  @click="singleFormat = singleFormat === 'image' ? 'pdf' : 'image'"
+                  class="text-xs px-2 py-1 rounded font-medium transition-colors"
+                  :class="singleFormat==='image' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'">
+            {{ singleFormat === 'image' ? '🖼️ 图片' : '📄 PDF' }}
           </button>
         </div>
 
@@ -151,11 +150,10 @@
             </div>
           </div>
           <div>
-            <ImageUploader v-if="uploadMode==='single'" @file-change="onImageFileChange" />
-            <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
-            <CadBatchUploader v-else-if="uploadMode==='cad_batch'" @results-update="onCadBatchResults" @preview="onCadPreview" />
-            <div v-else-if="uploadMode==='pdf'" class="card">
-              <label class="block text-sm font-medium text-gray-700 mb-2">上传PDF施工图</label>
+            <!-- 单张上传模式：图片 / PDF 二选一 -->
+            <ImageUploader v-if="uploadMode==='single' && singleFormat==='image'" @file-change="onImageFileChange" />
+            <div v-else-if="uploadMode==='single' && singleFormat==='pdf'" class="card">
+              <label class="block text-sm font-medium text-gray-700 mb-2">📄 上传PDF施工图</label>
               <input type="file" accept=".pdf" @change="onPdfFileChange"
                      class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
               <p v-if="pdfFile" class="text-xs text-green-600 mt-2 flex items-center gap-2">
@@ -167,8 +165,10 @@
               </button>
               <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
             </div>
+            <!-- 多张队列模式（同时支持CAD和效果图） -->
+            <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
             <!-- 图片预览 -->
-            <div v-if="imagePreviewUrl && uploadMode==='single'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
+            <div v-if="imagePreviewUrl && uploadMode==='single' && singleFormat==='image'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
               <p class="text-xs text-gray-500 mb-1">🖼️ 效果图预览:</p>
               <img :src="imagePreviewUrl" class="w-full h-32 object-cover rounded border border-gray-200" />
             </div>
@@ -310,7 +310,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, provide } from 'vue'
 import API from './services/api.js'
 import CadUploader from './components/CadUploader.vue'
 import ImageUploader from './components/ImageUploader.vue'
@@ -325,7 +325,6 @@ import ProcessPanel from './components/ProcessPanel.vue'
 import ProcessSpaceMap from './components/ProcessSpaceMap.vue'
 import SurfaceBreakdown from './components/SurfaceBreakdown.vue'
 import VisionTestPanel from './components/VisionTestPanel.vue'
-import CadBatchUploader from './components/CadBatchUploader.vue'
 import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
 import CadViewer from './components/CadViewer.vue'
@@ -345,6 +344,7 @@ const tabs = [
 
 const activeTab = ref('home')
 const uploadMode = ref('single')
+const singleFormat = ref('image')
 const projectName = ref('装修工程')
 const cadFile = ref(null)
 const imageFile = ref(null)
@@ -355,6 +355,10 @@ const imageResult = ref(null)
 const sysStatus = ref(null)
 const historyRef = ref(null)
 const progressSteps = ref([])
+
+// 🌟 刷新键：分析完成后+1，子组件watch此值自动重新加载数据
+const refreshKey = ref(0)
+provide('refreshKey', refreshKey)
 
 // 进度辅助函数
 function addStep(text) {
@@ -496,12 +500,7 @@ function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
   if (results.length > 0) {
     activeTab.value = 'merge'
-  }
-}
-function onCadBatchResults(results) {
-  // CAD批量完成后自动切到历史记录查看结果
-  if (results.length > 0) {
-    activeTab.value = 'history'
+    refreshKey.value++  // 🌟 通知子组件刷新
   }
 }
 
@@ -599,6 +598,7 @@ async function startAnalysis() {
 
   loading.value = false
   analysisDone.value = true
+  refreshKey.value++  // 🌟 通知子组件刷新数据
 }
 
 function onNewQuote(quoteId) {
@@ -631,6 +631,7 @@ async function startPdfAnalysis() {
   pdfLoading.value = false
   if (res.success) {
     pdfFile.value = null  // 清空
+    refreshKey.value++  // 🌟 通知子组件刷新
     activeTab.value = 'merge'  // 切到融合报价
   }
 }

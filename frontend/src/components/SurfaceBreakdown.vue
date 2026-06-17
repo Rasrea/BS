@@ -250,8 +250,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject, watch } from 'vue'
 import API from '../services/api.js'
+
+const refreshKey = inject('refreshKey', ref(0))
 
 const selectedDrawingId = ref('')
 const drawings = ref([])
@@ -311,6 +313,11 @@ const paginatedSpaces = computed(() => {
 // 实际上我们用 filteredSpaces 直接在表格显示，加上分页控制
 
 onMounted(async () => {
+  await loadLatestDrawing()
+})
+
+// 🌟 当 App 中分析完成时自动重新加载
+watch(refreshKey, async () => {
   await loadLatestDrawing()
 })
 

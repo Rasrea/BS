@@ -72,8 +72,18 @@ export const API = {
         timeout: 60000,
       })
       const disposition = headers['content-disposition'] || ''
-      const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s]+)/i) || disposition.match(/filename=([^;\s]+)/i)
-      const filename = match ? decodeURIComponent(match[1]) : `报价单_${quoteId}.xlsx`
+      let filename = `报价单_${quoteId}.xlsx`
+      // Try filename*=UTF-8''<url-encoded> format first (preferred by RFC 5987)
+      let match = disposition.match(/filename\*=(?:UTF-8''|utf-8'')([^;\s]+)/i)
+      if (match) {
+        filename = decodeURIComponent(match[1])
+      } else {
+        // Fallback: filename="<value>" or filename=<value> — strip surrounding quotes
+        match = disposition.match(/filename="([^"]*)"/i) || disposition.match(/filename=([^;\s]+)/i)
+        if (match) {
+          filename = match[1].replace(/^["']|["']$/g, '')
+        }
+      }
       // 触发浏览器下载
       const url = window.URL.createObjectURL(new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
       const a = document.createElement('a')
@@ -154,6 +164,12 @@ export const API = {
       const { data } = await api.post('/spaces/auto_suggest_match', fd, { timeout: 30000 })
       return data
     } catch (e) { return handleError(e) }
+  },
+
+  // === 获取图像识别结果列表 ===
+  async getImageResults() {
+    try { const { data } = await api.get('/image-results'); return data }
+    catch (e) { return handleError(e) }
   },
 
   // === 确认绑定 (新增) ===

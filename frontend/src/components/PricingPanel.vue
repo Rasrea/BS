@@ -71,7 +71,7 @@
           <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
           <div class="flex items-center gap-2">
             <input v-model.number="item.editValue" type="number" step="0.01" min="0" max="1"
-                   @input="item.sliderValue = Math.round(item.editValue * 100 / 5) * 5"
+                   @input="item.sliderValue = Math.round(($event.target.valueAsNumber || 0) * 100 / 5) * 5"
                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
             <span class="text-xs text-gray-400">{{ (item.editValue * 100).toFixed(0) }}%</span>
             <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
@@ -183,7 +183,7 @@
               <td class="py-2 px-2 text-center">
                 <button @click="editItemId = item.id; editForm = {...item}"
                         class="text-xs text-primary-600 hover:text-primary-800 mr-2">编辑</button>
-                <button @click="deleteItem(item.id)" class="text-xs text-red-500 hover:text-red-700">删除</button>
+                <button @click="confirmDeleteItem(item.id, item.item_name)" class="text-xs text-red-500 hover:text-red-700">删除</button>
               </td>
             </tr>
           </tbody>
@@ -272,12 +272,22 @@
     <div class="text-xs text-gray-400 text-center py-2">
       💡 修改费率/单价后点击「保存」写入数据库，下次融合报价生效
     </div>
+
+    <!-- 自定义删除确认弹窗 -->
+    <ConfirmDialog
+      :visible="showDeleteDialog"
+      title="确认删除"
+      :message="deleteMessage"
+      @confirm="doDeleteItem"
+      @cancel="showDeleteDialog = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import API from '../services/api.js'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 // ======== 模版 ========
 const templates = ref([])
@@ -484,12 +494,26 @@ async function saveEditItem() {
   }
 }
 
-async function deleteItem(pid) {
-  if (!confirm('确认删除该计价分项？')) return
+// 删除确认弹窗
+const showDeleteDialog = ref(false)
+const pendingDeletePid = ref(null)
+const deleteMessage = ref('')
+
+function confirmDeleteItem(pid, itemName) {
+  pendingDeletePid.value = pid
+  deleteMessage.value = `确认删除计价分项「${itemName}」？此操作不可撤销。`
+  showDeleteDialog.value = true
+}
+
+async function doDeleteItem() {
+  const pid = pendingDeletePid.value
+  if (!pid) return
+  showDeleteDialog.value = false
   const res = await API.delete(`/pricing/items/${pid}`)
   if (res.success) {
     loadPricingItems()
   }
+  pendingDeletePid.value = null
 }
 
 // ======== 工序概况 ========

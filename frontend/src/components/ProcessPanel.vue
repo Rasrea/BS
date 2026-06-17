@@ -119,19 +119,29 @@
                      class="w-8 h-6 rounded cursor-pointer border-0 p-0" />
             </td>
             <td class="py-2 px-3 text-center">
-              <button @click="confirmDelete(p)" class="text-red-400 hover:text-red-600 text-xs"
+              <button @click="confirmDeleteProcess(p)" class="text-red-400 hover:text-red-600 text-xs"
                       :disabled="processes.length <= 1">删除</button>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <!-- 自定义删除确认弹窗 -->
+    <ConfirmDialog
+      :visible="showDeleteDialog"
+      title="确认删除"
+      :message="deleteMessage"
+      @confirm="doDeleteProcess"
+      @cancel="showDeleteDialog = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import API from '../services/api.js'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 const processes = ref([])
 const editForms = ref({})
@@ -228,9 +238,23 @@ async function addNew() {
   if (res.success) await load()
 }
 
-function confirmDelete(p) {
-  if (!confirm(`确认删除「${p.name}」？`)) return
+// 删除确认弹窗
+const showDeleteDialog = ref(false)
+const pendingDeleteP = ref(null)
+const deleteMessage = ref('')
+
+function confirmDeleteProcess(p) {
+  pendingDeleteP.value = p
+  deleteMessage.value = `确认删除工序「${p.name}」？此操作不可撤销。`
+  showDeleteDialog.value = true
+}
+
+function doDeleteProcess() {
+  const p = pendingDeleteP.value
+  if (!p) return
+  showDeleteDialog.value = false
   API.delete(`/processes/${p.id}`).then(() => load())
+  pendingDeleteP.value = null
 }
 
 function toggleFlow() { showFlow.value = !showFlow.value }

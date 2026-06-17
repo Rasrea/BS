@@ -126,9 +126,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, inject } from 'vue'
 import API from '../services/api.js'
 import QuoteDisplay from './QuoteDisplay.vue'
+
+const refreshKey = inject('refreshKey', ref(0))
 
 const emit = defineEmits(['quote-exists'])
 
@@ -220,9 +222,31 @@ async function loadResults() {
     selectedCadId.value = cadResults.value[0].id
     await loadSpaces()
   }
-  // 图片结果也从历史记录取
+  // 🌟 加载效果图识别结果：尝试专用接口 + 历史记录回退
+  await loadImageResults()
+}
+
+// 🌟 加载效果图识别结果（独立函数，便于复用）
+async function loadImageResults() {
+  imageResults.value = []
+  // 1. 优先尝试专用接口
   try {
-    const resp = await fetch('/api/history?page=1&page_size=3')
+    const imgRes = await API.getImageResults()
+    if (imgRes.success && Array.isArray(imgRes.data)) {
+      imgRes.data.forEach(img => {
+        imageResults.value.push({
+          id: img.id || img.image_result_id,
+          recognized_space: img.recognized_space || img.space_name || '未识别',
+          original_filename: img.original_filename || img.filename || ('图片#' + (img.id || 0)),
+          confidence: img.confidence || 0,
+        })
+      })
+      return  // 成功获取到数据就直接返回
+    }
+  } catch (e) { /* 静默降级到历史记录回退 */ }
+  // 2. 回退：从历史记录中提取
+  try {
+    const resp = await fetch('/api/history?page=1&page_size=10')
     const body = await resp.json()
     if (body.success && body.data?.quotes?.items) {
       const seen = new Set()
@@ -276,10 +300,11 @@ async function loadSpaces() {
 
 onMounted(loadResults)
 
-// 当选中的CAD变更时加载空间列表
+// 当选中的CAD变更时加载空间列表 并刷新效果图列表
 watch(selectedCadId, async (newId) => {
   if (newId) {
     await loadSpaces()
+    await loadImageResults()
   } else {
     spaces.value = []
   }
@@ -293,6 +318,11 @@ watch([selectedCadId, selectedImageIds], async ([newCadId, newImgIds]) => {
     suggestionMatches.value = []
     confirmedMatches.value = {}
   }
+})
+
+// 🌟 当 App 中分析完成时自动重新加载
+watch(refreshKey, async () => {
+  await loadResults()
 })
 
 async function loadSuggestions() {

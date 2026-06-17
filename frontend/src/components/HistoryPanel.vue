@@ -68,6 +68,15 @@
       <span class="text-sm text-gray-500">{{ page }} / {{ totalPages }}</span>
       <button class="btn-secondary text-sm !px-3 !py-1" :disabled="page >= totalPages" @click="changePage(page + 1)">下一页</button>
     </div>
+
+    <!-- 自定义删除确认弹窗 -->
+    <ConfirmDialog
+      :visible="showDeleteDialog"
+      title="确认删除"
+      message="确定要删除此报价记录吗？此操作不可撤销。"
+      @confirm="doDelete"
+      @cancel="showDeleteDialog = false"
+    />
   </div>
 </template>
 
@@ -75,12 +84,17 @@
 import { ref, onMounted } from 'vue'
 import API from '../services/api.js'
 import QuoteDisplay from './QuoteDisplay.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
 
 const records = ref([])
 const loading = ref(false)
 const page = ref(1)
 const totalPages = ref(1)
 const expandedId = ref(null)
+
+// 删除确认弹窗
+const showDeleteDialog = ref(false)
+const pendingDeleteId = ref(null)
 
 async function refresh() {
   loading.value = true
@@ -110,14 +124,22 @@ async function doExport(quoteId) {
   }
 }
 
-async function confirmDelete(quoteId) {
-  if (!confirm('确认删除此记录？')) return
+function confirmDelete(quoteId) {
+  pendingDeleteId.value = quoteId
+  showDeleteDialog.value = true
+}
+
+async function doDelete() {
+  const quoteId = pendingDeleteId.value
+  if (!quoteId) return
+  showDeleteDialog.value = false
   const res = await API.deleteHistory(quoteId)
   if (res.success) {
     records.value = records.value.filter(r => r.id !== quoteId)
   } else {
     alert('删除失败：' + res.message)
   }
+  pendingDeleteId.value = null
 }
 
 onMounted(refresh)

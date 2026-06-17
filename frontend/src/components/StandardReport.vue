@@ -38,7 +38,7 @@
     </div>
 
     <!-- ========== 视图1：综合报价总表 ========== -->
-    <div v-if="report && activeView === 'summary'">
+    <div v-if="report && activeView === 'summary'" :key="'summary-' + (report?.quote_id || 0)">
       <!-- 项目概况 -->
       <div class="card bg-gradient-to-r from-blue-50 to-indigo-50">
         <h3 class="text-sm font-semibold text-gray-700 mb-3">📋 项目概况</h3>
@@ -92,7 +92,7 @@
     </div>
 
     <!-- ========== 视图2：空间分项明细表 ========== -->
-    <div v-if="report && activeView === 'space_detail'">
+    <div v-if="report && activeView === 'space_detail'" :key="'space-' + (report?.quote_id || 0)">
       <div class="space-y-3">
         <div v-for="sd in report.space_details" :key="sd.space_name" class="card">
           <div class="flex items-center justify-between mb-2">
@@ -122,7 +122,7 @@
     </div>
 
     <!-- ========== 视图3：工序费用明细表 ========== -->
-    <div v-if="report && activeView === 'process_detail'">
+    <div v-if="report && activeView === 'process_detail'" :key="'process-' + (report?.quote_id || 0)">
       <div class="overflow-x-auto rounded-xl border border-gray-200">
         <table class="min-w-full divide-y divide-gray-200 text-sm">
           <thead class="bg-gray-50">
