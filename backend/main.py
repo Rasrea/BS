@@ -696,9 +696,12 @@ async def data_merge(
         # 构建 AI 图片材质索引：recognized_space → material_info
         ai_material_index = {}
         for img in image_rows:
-            space = img.get("recognized_space", "").strip()
-            if not space:
+            raw_space = img.get("recognized_space", "").strip()
+            if not raw_space:
                 continue
+            # AI输出归一化：将模型输出的空间名通过space_synonyms标准化
+            # 例如 "卧室" → "次卧", "大厅" → "客厅"
+            space = space_synonyms.normalize_name(raw_space) or raw_space
             mat = img.get("material_info", {})
             if isinstance(mat, str):
                 try:
