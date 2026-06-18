@@ -73,18 +73,17 @@
           <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
           <div class="flex items-center gap-2">
             <input v-model.number="item.editValue" type="number" step="0.01" min="0" max="1"
-                   @input="item.sliderValue = Math.round(($event.target.valueAsNumber || 0) * 100 / 5) * 5"
+                   @input="item.editValue = Math.min(1, Math.max(0, $event.target.valueAsNumber || 0))"
                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
-            <span class="text-xs text-gray-400">{{ (item.editValue * 100).toFixed(0) }}%</span>
-            <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
-                    class="text-xs px-2 py-1 bg-primary-50 text-primary-700 rounded hover:bg-primary-100">
-              保存
-            </button>
-          </div>
-          <input type="range" min="0" max="100" step="5"
-                 v-model.number="item.sliderValue"
-                 @input="item.editValue = item.sliderValue / 100"
-                 class="w-full mt-1 accent-primary-600" />
+              <span class="text-xs text-gray-400">{{ (item.editValue * 100).toFixed(0) }}%</span>
+              <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
+                      class="text-xs px-2 py-1 bg-primary-50 text-primary-700 rounded hover:bg-primary-100">
+                保存
+              </button>
+            </div>
+            <input type="range" min="0" max="1" step="0.05"
+                   v-model.number="item.editValue"
+                   class="w-full mt-1 accent-primary-600" />
         </div>
       </div>
     </div>
@@ -366,7 +365,6 @@ const deductionItems = computed(() => {
       return {
         ...s,
         editValue: val,
-        sliderValue: val * 100,
         dirty: false,
         desc: s.description?.replace(/_/g, ' ') || s.key,
       }

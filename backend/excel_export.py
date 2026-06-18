@@ -69,7 +69,7 @@ def export_quote_excel(quote_data: dict, output_dir: str = None) -> str:
 def _build_summary_sheet(ws, data: dict):
     """报价总表 Sheet"""
     ws.merge_cells("A1:F1")
-    ws["A1"] = f"📋 {data.get('project_name', '家装智能报价单')}"
+    ws["A1"] = f"📋 {(data.get('project_name') or '家装智能报价单')}"
     ws["A1"].font = TITLE_FONT
     ws["A1"].alignment = CENTER
 
@@ -202,7 +202,7 @@ def _build_quantity_sheet(ws, data: dict):
     cad_data = data.get("cad_data", [])
     row = 4
     for space in cad_data:
-        ws.cell(row=row, column=1, value=space.get("name", "")).font = NORMAL_FONT
+        ws.cell(row=row, column=1, value=space.get("space_name", space.get("name", ""))).font = NORMAL_FONT
         ws.cell(row=row, column=2, value=round(space.get("area", 0), 2)).font = NORMAL_FONT
         ws.cell(row=row, column=3, value=round(space.get("perimeter", 0), 2)).font = NORMAL_FONT
         ws.cell(row=row, column=4, value=round(space.get("length", 0), 2)).font = NORMAL_FONT
@@ -306,7 +306,7 @@ def export_process_quote_excel(quote_data: dict, output_dir: str = None) -> str:
 def _build_process_summary(ws, data: dict):
     """Sheet1: 工序报价总表 - 按工序汇总"""
     ws.merge_cells("A1:G1")
-    ws["A1"] = f"📋 {data.get('project_name', '精细化工序报价单')}"
+    ws["A1"] = f"📋 {(data.get('project_name') or '精细化工序报价单')}"
     ws["A1"].font = TITLE_FONT
     ws["A1"].alignment = CENTER
 

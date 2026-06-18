@@ -356,6 +356,7 @@ async function doMerge() {
   const res = await API.dataMerge(selectedCadId.value, selectedImageIds.value, bindingsJson)
   if (res.success) {
     mergeResult.value = res
+    refreshKey.value++
     emit('quote-exists', res.data?.quote_id)
   } else {
     mergeError.value = res.message || '融合失败'

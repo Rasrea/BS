@@ -602,7 +602,8 @@ async function startAnalysis() {
 }
 
 function onNewQuote(quoteId) {
-  // 生成报价后自动切到历史页
+  // 生成报价后自动切到历史页并刷新
+  refreshKey.value++
   activeTab.value = 'history'
 }
 
