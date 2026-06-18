@@ -1,0 +1,9 @@
+{
+  "dxf_baseline": {
+    "file": "73e7fb280299_cad.dxf",
+    "spaces_count": 106,
+    "total_area": 997.29,
+    "total_area_precise": 997.2899999999993,
+    "description": "Known-good parse result for the baseline DXF file. space_count=106, total_area≈997.29sqm"
+  }
+}
