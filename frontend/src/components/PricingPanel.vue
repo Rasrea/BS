@@ -18,8 +18,8 @@
             <button v-for="t in templates" :key="t.id"
               @click="switchTemplate(t.id)"
               class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-              :class="t.is_default
-                ? 'bg-primary-100 text-primary-700 border border-primary-300'
+              :class="t.id === activeTemplateId
+                ? 'bg-primary-100 text-primary-700 border border-primary-300 ring-2 ring-primary-400'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200'">
               {{ t.label }}
             </button>
@@ -45,6 +45,7 @@
             <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
             <div class="flex items-center gap-2">
               <input v-model.number="item.editValue" type="number" step="0.01"
+                     @input="item.editValue = $event.target.valueAsNumber"
                      class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
               <span class="text-xs text-gray-400">{{ item.suffix }}</span>
               <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
@@ -54,6 +55,7 @@
             </div>
             <input v-if="item.suffix === '%'" type="range" min="0" max="30" step="0.5"
                    v-model.number="item.editValue"
+                   @input="item.editValue = $event.target.valueAsNumber"
                    class="w-full mt-1 accent-primary-600" />
           </div>
         </div>

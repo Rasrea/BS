@@ -161,8 +161,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, inject, watch } from 'vue'
 import API from '../services/api.js'
+
+const refreshKey = inject('refreshKey', ref(0))
 
 const quotes = ref([])
 const selectedQuoteId = ref('')
@@ -188,11 +190,35 @@ const totalProcessSpaces = computed(() => {
 const totalMaterialCost = computed(() => report.value?.process_details?.reduce((s, p) => s + p.material_cost, 0) || 0)
 const totalLaborCost = computed(() => report.value?.process_details?.reduce((s, p) => s + p.labor_cost, 0) || 0)
 
-onMounted(async () => {
+/**
+ * 加载报价列表，支持多种响应结构（主路径 + 回退）
+ */
+async function loadQuotes() {
   const h = await API.getHistory(1, 50)
-  if (h.success && h.data?.quotes?.items) {
+  if (!h.success) return
+  // 优先路径: h.data.quotes.items (标准分页结构)
+  if (h.data?.quotes?.items) {
     quotes.value = h.data.quotes.items
   }
+  // 回退1: quotes 本身就是数组
+  else if (Array.isArray(h.data?.quotes)) {
+    quotes.value = h.data.quotes
+  }
+  // 回退2: data 自带 items 数组
+  else if (Array.isArray(h.data?.items)) {
+    quotes.value = h.data.items
+  }
+  // 回退3: data 本身就是数组
+  else if (Array.isArray(h.data)) {
+    quotes.value = h.data
+  }
+}
+
+onMounted(loadQuotes)
+
+// 🌟 当 App 中创建报价后自动刷新下拉列表
+watch(refreshKey, () => {
+  loadQuotes()
 })
 
 async function loadReport() {

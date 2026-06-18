@@ -1595,6 +1595,28 @@ async def list_drawings():
         return err(500, f"查询图纸列表失败: {str(e)}")
 
 
+@app.get("/api/image-results")
+async def get_all_image_results():
+    """获取所有效果图识别结果"""
+    try:
+        rows = await db.get_image_results()
+        if not rows:
+            return ok([])
+        results = []
+        for r in rows:
+            results.append({
+                "id": r.get("id"),
+                "image_result_id": r.get("id"),
+                "recognized_space": r.get("recognized_space", ""),
+                "original_filename": r.get("original_filename", r.get("filename", "")),
+                "filename": r.get("filename", ""),
+                "confidence": r.get("confidence", 0),
+            })
+        return ok(results)
+    except Exception as e:
+        return err(500, f"查询效果图识别结果失败: {str(e)}")
+
+
 @app.post("/api/spaces/{drawing_id}/compute_breakdown")
 async def compute_surface_breakdown(drawing_id: int):
     """

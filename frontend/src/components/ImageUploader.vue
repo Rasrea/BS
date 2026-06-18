@@ -55,7 +55,7 @@ function onDrop(e) { dragging.value = false; setFile(e.dataTransfer.files[0]) }
 function setFile(f) {
   if (!f) return
   const ext = f.name.split('.').pop().toLowerCase()
-  if (!['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(ext)) { alert('仅支持 jpg/png/webp/pdf 格式'); return }
+  if (!['jpg', 'jpeg', 'png', 'webp'].includes(ext)) { alert('仅支持 jpg/png/webp 格式'); return }
   file.value = f
   const reader = new FileReader()
   reader.onload = e => { preview.value = e.target.result }
