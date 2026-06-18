@@ -165,6 +165,7 @@ import { ref, computed, onMounted, inject, watch } from 'vue'
 import API from '../services/api.js'
 
 const refreshKey = inject('refreshKey', ref(0))
+const autoSelectQuoteId = inject('autoSelectQuoteId', ref(null))
 
 const quotes = ref([])
 const selectedQuoteId = ref('')
@@ -219,6 +220,18 @@ onMounted(loadQuotes)
 // 🌟 当 App 中创建报价后自动刷新下拉列表
 watch(refreshKey, () => {
   loadQuotes()
+})
+
+// 🌟 融合后自动选中新报价并加载报表
+watch(autoSelectQuoteId, (newId) => {
+  if (!newId) return
+  // 先刷新报价列表，再选中新报价
+  loadQuotes().then(() => {
+    selectedQuoteId.value = String(newId)
+    loadReport()
+  })
+  // 消费掉，防止重复触发
+  autoSelectQuoteId.value = null
 })
 
 async function loadReport() {

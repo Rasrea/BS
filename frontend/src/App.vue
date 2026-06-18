@@ -360,6 +360,10 @@ const progressSteps = ref([])
 const refreshKey = ref(0)
 provide('refreshKey', refreshKey)
 
+// 🌟 融合后自动选中报价ID，传递给标准报价页
+const autoSelectQuoteId = ref(null)
+provide('autoSelectQuoteId', autoSelectQuoteId)
+
 // 进度辅助函数
 function addStep(text) {
   progressSteps.value.push({ text, status: 'pending', duration: '' })
@@ -602,9 +606,10 @@ async function startAnalysis() {
 }
 
 function onNewQuote(quoteId) {
-  // 生成报价后自动切到历史页并刷新
+  // 生成报价后自动切到标准报价页并加载
   refreshKey.value++
-  activeTab.value = 'history'
+  autoSelectQuoteId.value = quoteId
+  activeTab.value = 'reports'
 }
 
 // ======== PDF识别 ========
