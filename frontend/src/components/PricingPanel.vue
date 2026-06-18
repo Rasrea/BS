@@ -362,10 +362,11 @@ const deductionItems = computed(() => {
     .filter(s => s.key.startsWith('deduct_') || s.key.startsWith('niche_') || s.key.startsWith('pillar_') || s.key.startsWith('bay_window_'))
     .map(s => {
       const val = parseFloat(s.value) || 0
+      const snapped = Math.round(val / 0.05) * 0.05
       return {
         ...s,
-        editValue: val,
-        dirty: false,
+        editValue: snapped,
+        dirty: Math.abs(snapped - val) > 0.001,
         desc: s.description?.replace(/_/g, ' ') || s.key,
       }
     })
