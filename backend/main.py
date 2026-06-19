@@ -9,6 +9,7 @@ FastAPI 主服务 - 家装智能自动报价系统（首期工程化版）
 """
 import os
 import uuid
+from collections import OrderedDict
 import json
 import asyncio
 import time
@@ -928,10 +929,10 @@ async def data_merge(
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("地面工程", ""), 0),
             })
 
-        # ── 去重聚合：相同project_name的分项合并 ──
-        merged = {}
+        # ── 去重聚合：相同空间+相同类目的分项合并 ──
+        merged = OrderedDict()
         for it in items:
-            key = it["project_name"]
+            key = (it.get("space_name", ""), it.get("category", ""), it.get("project_name", ""))
             if key in merged:
                 merged[key]["quantity"] = round(merged[key]["quantity"] + it["quantity"], 2)
                 merged[key]["subtotal"] = round(merged[key]["subtotal"] + it["subtotal"], 2)
