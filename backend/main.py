@@ -1349,6 +1349,7 @@ VL_MODEL_OPTIONS = {
     "llava:7b": "LLaVA 7B（默认，稳定）",
     "qwen2.5:7b": "Qwen2.5 7B（精度升级，中文优化）",
     "qwen2.5vl": "Qwen2.5-VL 7B（专用视觉模型）",
+    "minicpm-v:latest": "minicpm-v:8b（llava替代）"
 }
 
 SUPPORTED_VL_MODELS = set(VL_MODEL_OPTIONS.keys())

@@ -16,6 +16,44 @@ CROP_RATIOS = {
     "floor":   (0.60, 1.00),   # 地面：底部40%
 }
 
+# ═══════════════════════════════════════════════
+# 裁剪增强（动态裁剪 + 放大）
+# ═══════════════════════════════════════════════
+
+# 裁剪区域独立最大边长（比全图大，保留纹理细节）
+CROP_MAX_DIM = 768          # 裁剪区域放大到 768px
+
+# 放大裁剪：收窄宽度，只取中心区域放大
+# (y_start, y_end, x_center_ratio, x_width_ratio)
+# x_center_ratio=0.5 → 居中，x_width_ratio=0.5 → 只取中心50%宽度
+CROP_ZOOM_CONFIG = {
+    "ceiling": (0.00, 0.30, 0.5, 0.6),   # 顶面：中心60%宽度
+    "wall":    (0.25, 0.75, 0.5, 0.8),   # 墙面：中心80%宽度
+    "floor":   (0.60, 1.00, 0.5, 0.6),   # 地面：中心60%宽度
+}
+
+# 视图类型检测阈值（基于宽高比）
+# w/h < VIEW_NEAR_RATIO_LOW 或 > VIEW_NEAR_RATIO_HIGH → 近景/局部图
+VIEW_NEAR_RATIO_LOW = 0.7       # 竖长图（如手机拍的）
+VIEW_NEAR_RATIO_HIGH = 1.4      # 横短图（如特写）
+VIEW_PANORAMA_RATIO = 1.8       # 宽幅全景
+
+# 各视图类型的裁剪策略
+# "perspective" → 标准透视裁剪（默认）
+# "panorama" → 宽幅全景 → 放宽裁剪
+CROP_STRATEGY_PERSPECTIVE = {
+    "ceiling": {"y": (0.00, 0.30), "zoom": True},
+    "wall":    {"y": (0.25, 0.75), "zoom": True},
+    "floor":   {"y": (0.60, 1.00), "zoom": True},
+}
+
+CROP_STRATEGY_PANORAMA = {
+    "ceiling": {"y": (0.00, 0.25), "zoom": True},
+    "wall":    {"y": (0.25, 0.65), "zoom": True},
+    "floor":   {"y": (0.60, 1.00), "zoom": True},
+}
+
+
 # 模型输入预处理
 MAX_IMAGE_DIM = 1024       # 最长边像素
 JPEG_QUALITY = 85          # JPEG压缩质量

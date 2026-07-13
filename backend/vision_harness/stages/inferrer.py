@@ -54,6 +54,12 @@ def build_full_prompt() -> str:
 2. 如果图片中的材质不在列表内，选最接近的，不要填"未知"
 3. 输出严格JSON格式，字段固定如下，不要包含任何多余文字
 
+示例1：一张现代客厅效果图
+输出：{{"space_type": "客厅", "wall_material": "乳胶漆", "floor_material": "地砖", "ceiling_material": "石膏板吊顶", "decor_style": "现代简约", "remark": ""}}
+
+示例2：一张卧室效果图
+输出：{{"space_type": "主卧", "wall_material": "墙布", "floor_material": "实木复合地板", "ceiling_material": "石膏板吊顶", "decor_style": "轻奢", "remark": ""}}
+
 {{{{
   "space_type": "<从空间类型列表中选择>",
   "wall_material": "<从墙面材质列表中选择>",
@@ -113,6 +119,8 @@ class ModelInferrer:
         self.chat_url = self.base_url + OLLAMA_API_CHAT
         self.timeout = timeout or OLLAMA_TIMEOUT
         self._full_prompt: str | None = None
+        # ✅ 新增：连接池
+        self._session = requests.Session()  
 
     @property
     def full_prompt(self) -> str:
@@ -146,10 +154,12 @@ class ModelInferrer:
                 "temperature": OLLAMA_TEMPERATURE,
             },
         }
-
-        resp = requests.post(
+        
+        # ✅ 使用 Session
+        resp = self._session.post(
             self.chat_url, json=payload, timeout=self.timeout
         )
+        
         resp.raise_for_status()
         data = resp.json()
         return data.get("message", {}).get("content", "")
