@@ -106,6 +106,10 @@
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">墙面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">地面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">顶面</th>
+                
+                <!-- TODO -->
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">准确率</th>
+              
               </tr>
             </thead>
             <tbody>
@@ -122,6 +126,42 @@
           </table>
         </div>
       </div>
+
+      <!-- 在统计汇总卡片之前添加 -->
+      <div v-if="results.length > 0" class="flex items-center justify-end gap-2 mb-2">
+        <button 
+          class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+          @click="exportResults('csv')"
+        >
+          📥 导出 CSV
+        </button>
+        <button 
+          class="text-xs px-3 py-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors"
+          @click="exportResults('json')"
+        >
+          📥 导出 JSON
+        </button>
+      </div>
+
+      <!-- 统计汇总 -->
+      <div v-if="results.length > 0" class="card mb-3">
+        <h4 class="text-xs font-semibold text-gray-600 mb-2">⏱️ 性能统计（{{ selectedModel }}）</h4>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="text-center p-2 bg-blue-50 rounded">
+            <div class="text-lg font-bold text-blue-700">{{ stats.totalTime }}s</div>
+            <div class="text-[9px] text-gray-500">总耗时</div>
+          </div>
+          <div class="text-center p-2 bg-green-50 rounded">
+            <div class="text-lg font-bold text-green-700">{{ stats.avgTime }}s</div>
+            <div class="text-[9px] text-gray-500">平均耗时（去极值）</div>
+          </div>
+          <div class="text-center p-2 bg-purple-50 rounded">
+            <div class="text-lg font-bold text-purple-700">{{ stats.testCount }}</div>
+            <div class="text-[9px] text-gray-500">测试数量</div>
+          </div>
+        </div>
+      </div>
+
 
       <!-- 各图详情（折叠） -->
       <div v-for="(r, i) in results" :key="'detail-'+i" class="card">
@@ -215,6 +255,34 @@ const activeModel = ref('')
 const availableModels = ref([])
 const doneCount = ref(0)
 
+const stats = computed(() => {
+  const successful = results.value.filter(r => r.success)
+  if (successful.length === 0) {
+    return { totalTime: '0.00', avgTime: '0.00', testCount: 0 }
+  }
+  
+  // 计算总时间
+  const totalSec = successful.reduce((sum, r) => sum + r.total, 0)
+  
+  // 去除最大值和最小值后计算平均
+  const times = successful.map(r => r.total).sort((a, b) => a - b)
+  let trimmedTimes = times
+  
+  if (times.length > 2) {
+    trimmedTimes = times.slice(1, -1) // 去掉第一个（最小）和最后一个（最大）
+  }
+  
+  const avgSec = trimmedTimes.length > 0 
+    ? trimmedTimes.reduce((sum, t) => sum + t, 0) / trimmedTimes.length 
+    : 0
+  
+  return {
+    totalTime: totalSec.toFixed(2),
+    avgTime: avgSec.toFixed(2),
+    testCount: successful.length
+  }
+})
+
 const statusText = computed(() => {
   if (!testing.value) return ''
   const done = doneCount.value
@@ -257,9 +325,110 @@ function clearAll() {
 }
 
 function timingColor(sec) {
-  if (sec < 2) return 'text-green-600'
+  if (sec < 6) return 'text-green-600'
   if (sec < 10) return 'text-yellow-600'
   return 'text-red-600'
+}
+
+/**
+ * 导出测试结果
+ * @param {'csv'|'json'} format - 导出格式
+ */
+function exportResults(format = 'csv') {
+  if (results.value.length === 0) {
+    alert('没有可导出的测试结果')
+    return
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const filename = `vision_test_${selectedModel.value}_${timestamp}`
+
+  if (format === 'csv') {
+    exportAsCSV(results.value, filename)
+  } else if (format === 'json') {
+    exportAsJSON(results.value, stats.value, filename)
+  }
+}
+
+/**
+ * 导出为 CSV 格式
+ */
+function exportAsCSV(results, filename) {
+  // CSV 表头
+  const headers = [
+    '序号',
+    '文件名',
+    '总耗时(s)',
+    '预处理耗时(s)',
+    '推理耗时(s)',
+    '空间类型',
+    '墙面材料',
+    '地面材料',
+    '顶面材料',
+    '测试结果'
+  ]
+
+  // 转换结果为 CSV 行
+  const rows = results.map((r, i) => [
+    i + 1,
+    `"${r.filename}"`,  // 用引号包裹，防止逗号问题
+    r.total,
+    r.timings?.preprocess || 0,
+    r.timings?.inference || 0,
+    `"${r.space || '-'}"`,
+    `"${r.wall || '-'}"`,
+    `"${r.floor || '-'}"`,
+    `"${r.ceiling || '-'}"`,
+    r.success ? '成功' : '失败'
+  ])
+
+  // 组合 CSV 内容
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.join(','))
+  ].join('\n')
+
+  // 添加 BOM 以支持 Excel 正确显示中文
+  const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+  downloadFile(blob, `${filename}.csv`)
+}
+
+/**
+ * 导出为 JSON 格式
+ */
+function exportAsJSON(results, statsData, filename) {
+  const exportData = {
+    exportTime: new Date().toISOString(),
+    model: selectedModel.value,
+    statistics: statsData,
+    results: results.map(r => ({
+      filename: r.filename,
+      total: r.total,
+      timings: r.timings,
+      space: r.space,
+      wall: r.wall,
+      floor: r.floor,
+      ceiling: r.ceiling,
+      success: r.success,
+      rawData: r.rawData
+    }))
+  }
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+  downloadFile(blob, `${filename}.json`)
+}
+
+/**
+ * 下载文件
+ */
+function downloadFile(blob, filename) {
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
 }
 
 async function startBatchTest() {
