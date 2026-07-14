@@ -542,12 +542,14 @@ async def analyze_image(
 async def vision_test(
     image_file: UploadFile = File(None),
     model: str = Form(""),
+    crop_mode: str = Form("on"),  # 新增：裁剪模式开关 ("on" 或 "off")
 ):
     """
     独立视觉模型测试接口（诊断用）
     - 无状态机锁，无数据库写，无30s超时
     - 可指定模型：留空用系统默认，或传具体模型名
     - 返回各步骤耗时 + 原始模型响应
+    - crop_mode: "on" 启用分区域裁剪识别（ceiling/wall/floor），提高识别精度
     """
     if not image_file:
         return err(400, "请上传图片（jpg/png/webp）")
@@ -570,12 +572,31 @@ async def vision_test(
     # 步骤2：模型推理
     t0 = time.time()
     from image_recognizer import recognize_with_fallback
+    
     if model:
         vl_model = model
     else:
         settings = await db.get_settings()
         vl_model = settings.get("active_vl_model", "qwen2.5:7b")
-    data = recognize_with_fallback(processed_path, vl_model)
+
+    # 根据 crop_mode 选择识别策略
+    use_crop = crop_mode.lower() in ("on", "true", "1", "yes")
+    
+    if use_crop:
+        from crop_recognizer import CropRecognizer
+                
+        recognizer = CropRecognizer()
+        data = recognizer.recognize_with_crop(
+            image_path=processed_path,
+            model=vl_model,
+            upload_dir=UPLOAD_DIR,
+            task_id=task_id,
+        )
+    else:
+        # 传统全图识别
+        data = recognize_with_fallback(processed_path, vl_model)
+        data["_crop_mode"] = "disabled"
+    
     timings["inference"] = round(time.time() - t0, 3)
 
     t_total = round(time.time() - t_total, 3)
@@ -612,8 +633,6 @@ async def vision_test(
     }
 
     return ok(result)
-
-
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
     """PDF施工图识别：PDF→图片→复用LLaVA识别"""

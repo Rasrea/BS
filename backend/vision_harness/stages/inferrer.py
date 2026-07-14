@@ -98,6 +98,14 @@ def build_crop_prompt(field: str) -> str:
 
 输出JSON（只返回JSON，不要多余文字）：
 {{{{"ceiling_material": "<从上面列表中选择>"}}}}""",
+
+        "full": f"""你是一位专业的室内装修材料识别专家。请仔细分析这张**家装效果图**，识别的空间类型。
+        
+▼ 可选空间类型（严格从中选择，禁止编造）：
+{SPACE_TYPES}
+
+输出JSON（只返回JSON，不要多余文字）：
+{{{{"space_type": "<从上面列表中选择>"}}}}"""
     }
     return prompts.get(field, "")
 
