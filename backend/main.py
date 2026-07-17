@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 from dotenv import load_dotenv
+load_dotenv()
 
 from cad_parser import parse_cad_file
 from image_recognizer import recognize_with_fallback
@@ -35,8 +36,8 @@ from image_preprocessor import preprocess_image, preprocess_image_stats
 from db import db
 from excel_export import export_quote_excel
 import space_synonyms
+from vision_harness.config import DASHSCOPE_API_TOKEN#新增，导入云百炼key
 
-load_dotenv()
 
 # ─────────────────── App ───────────────────
 
@@ -1349,6 +1350,16 @@ VL_MODEL_OPTIONS = {
     "llava:7b": "LLaVA 7B（默认，稳定）",
     "qwen2.5:7b": "Qwen2.5 7B（精度升级，中文优化）",
     "qwen2.5vl": "Qwen2.5-VL 7B（专用视觉模型）",
+    "qwen3-vl-8b-thinking": "通义千问3 VL 8b（思考）",
+    "qwen3-vl-8b-instruct": "通义千问3 VL 8b",
+    "qwen2.5-vl-3b-instruct": "通义千问2.5 VL 3b AWQ",
+    "dashscope:qwen3-vl-plus": "千问3 VL Plus",
+    "dashscope:qwen3-vl-flash": "千问3.6 VL Flash（快速）",
+    "dashscope:qwen3.5-ocr": "千问3.5 OCR（文字提取）",
+    "dashscope:qwen3-vl-32b-instruct": "千问3 32b",
+    "dashscope:qwen3-vl-32b-thinking": "千问3 32b思考",
+    "dashscope:qwen3.7-plus": "千问3.7 plus",
+    "dashscope:qwen3.7-max": "千问3.7 max"
 }
 
 SUPPORTED_VL_MODELS = set(VL_MODEL_OPTIONS.keys())
@@ -1359,6 +1370,8 @@ async def get_vl_model():
     """查询当前视觉模型配置 + 可用模型列表"""
     settings = await db.get_settings()
     active = settings.get("active_vl_model", "llava:7b")
+    # ✅ 第一次修改：直接从环境变量读云key
+    dashscope_key = DASHSCOPE_API_TOKEN
     # 检查 Ollama 在线状态
     try:
         import requests
@@ -1372,12 +1385,23 @@ async def get_vl_model():
 
     available = []
     for key, label in VL_MODEL_OPTIONS.items():
-        available.append({
-            "key": key,
-            "label": label,
-            "installed": key in local_models,
-            "active": key == active,
-        })
+        # ✅ 关键修改第一次：区分云端和本地模型
+        if key.startswith("dashscope:"):
+            # 云端模型：只要配置了API Key就算可用
+            available.append({
+                "key": key,
+                "label": label,
+                "installed": bool(dashscope_key),  # 有API Key就可用
+                "active": key == active,
+                "is_cloud": True,  # 标记云端，方便前端区分
+            })
+        else:
+            available.append({
+                "key": key,
+                "label": label,
+                "installed": key in local_models,
+                "active": key == active,
+            })
 
     # 也列出其他本地可用的可能视觉模型
     for m in sorted(local_models):
@@ -1402,8 +1426,17 @@ async def set_vl_model(
     """切换视觉模型，需要系统空闲"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法切换模型")
+    # ✅ 关键修改第一次：云端模型走独立逻辑
 
-    if model not in SUPPORTED_VL_MODELS:
+    # 直接从环境变量读取key
+    dashscope_key = DASHSCOPE_API_TOKEN
+
+    if model.startswith("dashscope:"):
+        # 云端模型只需要检查API Key
+        if not dashscope_key:
+            return err(400, "切换云百炼模型前请先配置 dashscope_api_key")
+        # 云端模型不需要检查本地Ollama，直接放行
+    elif model not in SUPPORTED_VL_MODELS:
         # 允许切换为本地安装的其他模型
         try:
             import requests
@@ -1430,19 +1463,75 @@ async def set_vl_model(
 @app.get("/api/settings/vl_model/test")
 async def test_vl_model():
     """测试当前视觉模型连通性（无图片，只检测API响应）"""
-    try:
-        import requests
-        r = requests.post("http://localhost:11434/api/chat", json={
-            "model": (await db.get_settings()).get("active_vl_model", "llava:7b"),
-            "messages": [{"role": "user", "content": "ping"}],
-            "stream": False,
-        }, timeout=10)
-        if r.status_code == 200:
-            return ok({"status": "ok", "model": (await db.get_settings()).get("active_vl_model")})
-        else:
-            return ok({"status": "error", "detail": f"HTTP {r.status_code}"})
-    except Exception as e:
-        return ok({"status": "error", "detail": str(e)})
+    settings = await db.get_settings()
+    active_model = settings.get("active_vl_model", "llava:7b")
+    dashscope_key = DASHSCOPE_API_TOKEN
+
+    # ✅ 关键修改：云端模型走独立测试逻辑
+    if active_model.startswith("dashscope:"):
+        if not dashscope_key:
+            return ok({"status": "error", "detail": "未配置 dashscope_api_key"})
+
+        try:
+            import requests
+            import base64
+
+            # 使用1x1透明像素PNG作为测试图片（极小，不会产生费用）
+            test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+            # 提取真实模型名
+            actual_model = active_model.replace("dashscope:", "")
+
+            resp = requests.post(
+                "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+                headers={
+                    "Authorization": f"Bearer {dashscope_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": actual_model,
+                    "input": {
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_b64}"}},
+                                {"type": "text", "text": "ping"}
+                            ]
+                        }]
+                    },
+                    "parameters": {"max_tokens": 10}
+                },
+                timeout=10
+            )
+
+            if resp.status_code == 200:
+                return ok({"status": "ok", "model": active_model, "type": "cloud"})
+            else:
+                error_detail = f"HTTP {resp.status_code}"
+                try:
+                    error_data = resp.json()
+                    if "message" in error_data:
+                        error_detail += f": {error_data['message']}"
+                except:
+                    pass
+                return ok({"status": "error", "detail": error_detail})
+
+        except Exception as e:
+            return ok({"status": "error", "detail": f"云百炼连接失败: {str(e)}"})
+    else:
+        try:
+            import requests
+            r = requests.post("http://localhost:11434/api/chat", json={
+                "model": (await db.get_settings()).get("active_vl_model", "llava:7b"),
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": False,
+            }, timeout=10)
+            if r.status_code == 200:
+                return ok({"status": "ok", "model": (await db.get_settings()).get("active_vl_model")})
+            else:
+                return ok({"status": "error", "detail": f"HTTP {r.status_code}"})
+        except Exception as e:
+            return ok({"status": "error", "detail": str(e)})
 
 
 # ─────────────────── 接口：施工工序管理 ───────────────────
