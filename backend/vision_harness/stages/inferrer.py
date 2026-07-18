@@ -1,7 +1,7 @@
 """
 BuildSight 视觉识别 Harness — 模型推理层
 ============================================
-封装 Ollama API 调用，隔离模型通信细节。
+封装 Ollama / DashScope API 调用，隔离模型通信细节。
 
 职责：
 1. 发送图片+Prompt → Ollama
@@ -14,6 +14,7 @@ import json
 import re
 import logging
 import requests
+import base64
 
 from vision_harness.config import (
     OLLAMA_BASE_URL,
@@ -21,6 +22,11 @@ from vision_harness.config import (
     OLLAMA_TIMEOUT,
     OLLAMA_TEMPERATURE,
     DEFAULT_MODEL,
+    # 第一次修改，新增导入云百炼配置
+    DASHSCOPE_BASE_URL,
+    DASHSCOPE_API_CHAT,
+    DASHSCOPE_API_TOKEN,
+    DASHSCOPE_MODEL,#第一次修改，目前该值冗余
 )
 from vision_harness.material_library import (
     SPACE_TYPES, WALL_MATERIALS, FLOOR_MATERIALS, CEILING_MATERIALS,
@@ -151,7 +157,9 @@ class ModelInferrer:
     def infer(self, prompt: str, image_base64: str,
               model: str = DEFAULT_MODEL) -> str:
         """
-        调用模型推理。
+        调用模型推理（自动识别 Ollama 或 DashScope）。
+
+        约定：model 以 'dashscope:' 开头则调用云端，否则调用本地 Ollama。
 
         参数:
             prompt: 推理提示词
@@ -161,27 +169,63 @@ class ModelInferrer:
         返回:
             模型原始输出文本
         """
-        payload = {
-            "model": model,
-            "messages": [{
-                "role": "user",
-                "content": prompt,
-                "images": [image_base64],
-            }],
-            "stream": False,
-            "options": {
+        # ===== 情况 1: 云百炼 (第一次修改，新增云百炼逻辑) =====
+        if model.startswith("dashscope:"):
+            # 提取真实模型名，如 "dashscope:qwen-vl-plus" -> "qwen-vl-plus"
+            actual_model = model.replace("dashscope:", "")
+            if not DASHSCOPE_API_TOKEN:
+                raise ValueError("DASHSCOPE_API_TOKEN 未配置，请在环境变量中设置。")
+            url = f"{DASHSCOPE_BASE_URL}{DASHSCOPE_API_CHAT}"
+            headers = {
+                "Authorization": f"Bearer {DASHSCOPE_API_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            image_url_data = f"data:image/jpeg;base64,{image_base64}"
+
+            payload = {
+                "model": actual_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": image_url_data}},
+                            {"type": "text", "text": prompt}
+                        ]
+                    }
+                ],
                 "temperature": OLLAMA_TEMPERATURE,
-            },
-        }
-        
-        # ✅ 使用 Session
-        resp = self._session.post(
-            self.chat_url, json=payload, timeout=self.timeout
-        )
-        
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("message", {}).get("content", "")
+                "stream": False
+            }
+
+            logger.info(f"Calling DashScope API: {actual_model}")
+            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+            resp.raise_for_status()
+
+            data = resp.json()
+            # 提取文本内容（适配 DashScope 的返回格式）
+            # 格式: data['choices'][0]['message']['content']
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        # ===== 情况 2: Ollama 本地 (第一次修改，未进行任何修改)=====
+        else:
+            payload = {
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [image_base64],
+                }],
+                "stream": False,
+                "options": {
+                    "temperature": OLLAMA_TEMPERATURE,
+                },
+            }
+
+            resp = requests.post(
+                self.chat_url, json=payload, timeout=self.timeout
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("message", {}).get("content", "")
 
     def health_check(self) -> bool:
         """检查 Ollama 服务是否正常"""

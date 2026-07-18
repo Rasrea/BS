@@ -12,10 +12,26 @@
         <div class="flex items-center gap-2">
           <span class="text-xs text-gray-500">🧠 测试模型:</span>
           <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
-            <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
+            <option v-for="m in filteredModels" :key="m.key" :value="m.key" :disabled="!m.installed"><!-- 展示过滤后的模型列表 -->
               {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
             </option>
           </select>
+          <!-- ========== 新增：环境切换开关 ========== -->
+          <div class="ml-auto flex items-center gap-2 pl-3 border-l border-gray-200">
+    <span class="text-xs" :class="useCloud ? 'text-gray-400' : 'text-gray-700 font-medium'">本地</span>
+    <button
+      @click="toggleEnv"
+      class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none"
+      :class="useCloud ? 'bg-blue-600' : 'bg-gray-300'"
+    >
+      <span
+        class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
+        :class="useCloud ? 'translate-x-5' : 'translate-x-1'"
+      />
+    </button>
+    <span class="text-xs" :class="useCloud ? 'text-gray-700 font-medium' : 'text-gray-400'">云端</span>
+  </div>
+  <!-- ========== 新增结束 ========== -->
           <span v-if="activeModel === selectedModel" class="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">系统当前在用</span>
           <span v-else class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">仅测试用</span>
         </div>
@@ -100,7 +116,7 @@
           </svg>
           {{ testing ? `测试中 ${doneCount}/${files.length}...` : '🚀 批量测试' }}
         </button>
-        <span v-if="testing" class="text-xs text-primary-600 animate-pulse">{{ statusText }}</span>
+        <span v-if="testing" class="text-xs text-primary-600 animate-pulse">{{ testEnvStatus }}</span>
       </div>
 
       <!-- 进度条 -->
@@ -273,8 +289,46 @@ const results = ref([])
 const previewIndex = ref(0)
 const selectedModel = ref('qwen2.5:7b')
 const activeModel = ref('')
-const availableModels = ref([])
+const availableModels = ref([])// 这个现在存的是后端返回的全量列表
 const doneCount = ref(0)
+
+// ========== 新增：环境切换状态 ==========
+// 默认使用本地模型（false），切换云端为 true
+const useCloud = ref(false)
+
+// 计算属性：根据开关状态过滤模型列表
+const filteredModels = computed(() => {
+  return availableModels.value.filter(m => {
+    // 判断是否为云端模型（你的后端逻辑是 dashscope: 开头）
+    const isCloudModel = m.key.startsWith('dashscope:')
+    // 如果开关是云端，只返回云端模型；否则只返回本地模型
+    return useCloud.value ? isCloudModel : !isCloudModel
+  })
+})
+
+// 切换环境的方法
+function toggleEnv() {
+  useCloud.value = !useCloud.value
+
+  // 切换后，自动选中当前列表里的第一个可用模型
+  const targetList = filteredModels.value
+  if (targetList.length > 0) {
+    // 优先选已安装的
+    const installed = targetList.find(m => m.installed)
+    selectedModel.value = installed ? installed.key : targetList[0].key
+  }
+}
+
+// 顺便优化一下状态文本，区分本地和云端
+const testEnvStatus = computed(() => {
+  if (!testing.value) return ''
+  const env = useCloud.value ? '云端' : '本地'
+  const done = doneCount.value
+  const total = files.value.length
+  const current = files.value.find(f => f.testing)
+  return `${env}测试 ${done + 1}/${total}: ${current?.name || '...'}`
+})
+// ========== 新增结束 ==========
 const cropEnabled = ref(true)  // 默认开启裁剪识别
 
 const stats = computed(() => {
@@ -319,6 +373,11 @@ onMounted(async () => {
     activeModel.value = res.data.active_model
     selectedModel.value = res.data.active_model
     availableModels.value = res.data.available_models || []
+  // 【可选优化】根据当前系统模型，初始化开关状态
+    // 如果系统正在用云端模型，开关就拨到云端
+    if (res.data.active_model?.startsWith('dashscope:')) {
+      useCloud.value = true
+    }
   }
 })
 

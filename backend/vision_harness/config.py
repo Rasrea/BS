@@ -3,6 +3,10 @@ BuildSight 视觉识别 Harness — 中心化配置
 ============================================
 所有可调参数集中管理，一键调参，不散落在各模块中。
 """
+import os
+from dotenv import load_dotenv#main接口使用
+
+load_dotenv()
 
 # ═══════════════════════════════════════════════
 # 图像预处理
@@ -61,12 +65,25 @@ JPEG_QUALITY = 85          # JPEG压缩质量
 # ═══════════════════════════════════════════════
 # 模型推理
 # ═══════════════════════════════════════════════
-
-DEFAULT_MODEL = "qwen2.5:7b"
+# Ollama 本地模型
+DEFAULT_MODEL = "qwen2.5:7b"# 默认本地模型
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_API_CHAT = "/api/chat"
+
+#通用参数
 OLLAMA_TIMEOUT = 120       # 单次推理超时（秒）
 OLLAMA_TEMPERATURE = 0.1   # 推理温度（低=更确定）
+
+# ===== 第一次修改：新增-云百炼 (DashScope) 配置 =====
+# 使用 OpenAI 兼容模式
+DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DASHSCOPE_API_CHAT = "/chat/completions"
+DASHSCOPE_MODEL = "qwen-vl-plus" # 默认云端模型
+# 云百炼Token从环境变量读取
+DASHSCOPE_API_TOKEN = os.getenv("DASHSCOPE_API_KEY", "")
+DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3-vl-plus")
+
+
 
 # ═══════════════════════════════════════════════
 # 校验 & 重试
