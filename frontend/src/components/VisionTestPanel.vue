@@ -7,40 +7,43 @@
         不经过数据库、不经过融合流程，纯诊断用途，方便对比不同模型效果。
       </p>
 
-      <!-- 模型选择和裁剪开关 -->
-      <div class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-gray-500">🧠 测试模型:</span>
-          <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
-            <option v-for="m in filteredModels" :key="m.key" :value="m.key" :disabled="!m.installed"><!-- 展示过滤后的模型列表 -->
+      <!-- 模型选择，云端调用和裁剪开关 -->
+      <div class="flex flex-col gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+        <!-- 第一行：模型选择 + 环境切换（紧邻） -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-gray-500 whitespace-nowrap">🧠 测试模型:</span>
+          <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white min-w-0 max-w-[160px]">
+            <option v-for="m in filteredModels" :key="m.key" :value="m.key" :disabled="!m.installed">
               {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
             </option>
           </select>
-          <!-- ========== 新增：环境切换开关 ========== -->
-          <div class="ml-auto flex items-center gap-2 pl-3 border-l border-gray-200">
-    <span class="text-xs" :class="useCloud ? 'text-gray-400' : 'text-gray-700 font-medium'">本地</span>
-    <button
-      @click="toggleEnv"
-      class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none"
-      :class="useCloud ? 'bg-blue-600' : 'bg-gray-300'"
-    >
-      <span
-        class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform"
-        :class="useCloud ? 'translate-x-5' : 'translate-x-1'"
-      />
-    </button>
-    <span class="text-xs" :class="useCloud ? 'text-gray-700 font-medium' : 'text-gray-400'">云端</span>
-  </div>
-  <!-- ========== 新增结束 ========== -->
-          <span v-if="activeModel === selectedModel" class="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">系统当前在用</span>
-          <span v-else class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">仅测试用</span>
+
+          <!-- 环境切换开关 — 紧跟在模型选择后面 -->
+          <div class="flex items-center gap-1.5 pl-2 border-l border-gray-200 shrink-0">
+            <span class="text-[10px]" :class="useCloud ? 'text-gray-300' : 'text-gray-500 font-medium'">本地</span>
+            <button
+              @click="toggleEnv"
+              class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none"
+              :class="useCloud ? 'bg-blue-500' : 'bg-gray-300'"
+            >
+              <span
+                class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"
+                :class="useCloud ? 'translate-x-3.5' : 'translate-x-0.5'"
+              />
+            </button>
+            <span class="text-[10px]" :class="useCloud ? 'text-blue-600 font-medium' : 'text-gray-300'">云端</span>
+          </div>
+
+          <span v-if="activeModel === selectedModel" class="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded whitespace-nowrap">系统当前在用</span>
+          <span v-else class="text-[10px] text-gray-400 whitespace-nowrap">仅测试用</span>
         </div>
-        
-        <div class="flex items-center gap-2 pl-3 border-l border-gray-300">
-          <span class="text-xs text-gray-500">✂️ 分区域裁剪:</span>
+
+        <!-- 第二行：裁剪开关 -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-gray-500 whitespace-nowrap">✂️ 分区域裁剪:</span>
           <button
             @click="cropEnabled = !cropEnabled"
-            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0"
             :class="cropEnabled ? 'bg-primary-500' : 'bg-gray-300'"
           >
             <span class="sr-only">切换裁剪识别</span>
@@ -49,7 +52,7 @@
               :class="cropEnabled ? 'translate-x-5' : 'translate-x-0.5'"
             />
           </button>
-          <span class="text-[10px]" :class="cropEnabled ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-100'">
+          <span class="text-[10px] shrink-0" :class="cropEnabled ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-100'">
             {{ cropEnabled ? '启用' : '关闭' }}
           </span>
           <span class="text-[10px] text-gray-400">将图像分为天花板/墙面/地面分别识别</span>

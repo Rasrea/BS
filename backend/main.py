@@ -1390,7 +1390,7 @@ async def get_vl_model():
     """查询当前视觉模型配置 + 可用模型列表"""
     settings = await db.get_settings()
     active = settings.get("active_vl_model", "llava:7b")
-    # ✅ 第一次修改：直接从环境变量读云key
+    # 直接从环境变量读云key
     dashscope_key = DASHSCOPE_API_TOKEN
     # 检查 Ollama 在线状态
     try:
@@ -1405,7 +1405,7 @@ async def get_vl_model():
 
     available = []
     for key, label in VL_MODEL_OPTIONS.items():
-        # ✅ 关键修改第一次：区分云端和本地模型
+        # 区分云端和本地模型
         if key.startswith("dashscope:"):
             # 云端模型：只要配置了API Key就算可用
             available.append({
@@ -1446,7 +1446,7 @@ async def set_vl_model(
     """切换视觉模型，需要系统空闲"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法切换模型")
-    # ✅ 关键修改第一次：云端模型走独立逻辑
+    # 云端模型走独立逻辑
 
     # 直接从环境变量读取key
     dashscope_key = DASHSCOPE_API_TOKEN
@@ -1487,7 +1487,7 @@ async def test_vl_model():
     active_model = settings.get("active_vl_model", "llava:7b")
     dashscope_key = DASHSCOPE_API_TOKEN
 
-    # ✅ 关键修改：云端模型走独立测试逻辑
+    # 云端模型走独立测试逻辑
     if active_model.startswith("dashscope:"):
         if not dashscope_key:
             return ok({"status": "error", "detail": "未配置 dashscope_api_key"})

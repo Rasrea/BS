@@ -4,7 +4,7 @@ BuildSight 视觉识别 Harness — 中心化配置
 所有可调参数集中管理，一键调参，不散落在各模块中。
 """
 import os
-from dotenv import load_dotenv#main接口使用
+from dotenv import load_dotenv  # main接口使用
 
 load_dotenv()
 
@@ -74,7 +74,7 @@ OLLAMA_API_CHAT = "/api/chat"
 OLLAMA_TIMEOUT = 120       # 单次推理超时（秒）
 OLLAMA_TEMPERATURE = 0.1   # 推理温度（低=更确定）
 
-# ===== 第一次修改：新增-云百炼 (DashScope) 配置 =====
+# ===== 云百炼 (DashScope) 配置 =====
 # 使用 OpenAI 兼容模式
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DASHSCOPE_API_CHAT = "/chat/completions"

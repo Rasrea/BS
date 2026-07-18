@@ -22,11 +22,11 @@ from vision_harness.config import (
     OLLAMA_TIMEOUT,
     OLLAMA_TEMPERATURE,
     DEFAULT_MODEL,
-    # 第一次修改，新增导入云百炼配置
+    # 导入云百炼配置
     DASHSCOPE_BASE_URL,
     DASHSCOPE_API_CHAT,
     DASHSCOPE_API_TOKEN,
-    DASHSCOPE_MODEL,#第一次修改，目前该值冗余
+    DASHSCOPE_MODEL,  # 目前该值冗余
 )
 from vision_harness.material_library import (
     SPACE_TYPES, WALL_MATERIALS, FLOOR_MATERIALS, CEILING_MATERIALS,
@@ -144,7 +144,7 @@ class ModelInferrer:
         self.chat_url = self.base_url + OLLAMA_API_CHAT
         self.timeout = timeout or OLLAMA_TIMEOUT
         self._full_prompt: str | None = None
-        # ✅ 新增：连接池
+        # 连接池
         self._session = requests.Session()  
 
     @property
@@ -169,7 +169,7 @@ class ModelInferrer:
         返回:
             模型原始输出文本
         """
-        # ===== 情况 1: 云百炼 (第一次修改，新增云百炼逻辑) =====
+        # ===== 情况 1: 云百炼逻辑 =====
         if model.startswith("dashscope:"):
             # 提取真实模型名，如 "dashscope:qwen-vl-plus" -> "qwen-vl-plus"
             actual_model = model.replace("dashscope:", "")
@@ -205,7 +205,7 @@ class ModelInferrer:
             # 提取文本内容（适配 DashScope 的返回格式）
             # 格式: data['choices'][0]['message']['content']
             return data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        # ===== 情况 2: Ollama 本地 (第一次修改，未进行任何修改)=====
+        # ===== 情况 2: Ollama 本地 (未进行任何修改)=====
         else:
             payload = {
                 "model": model,
