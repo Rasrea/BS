@@ -24,6 +24,7 @@ from vision_harness.config import (
 )
 from vision_harness.material_library import (
     SPACE_TYPES, WALL_MATERIALS, FLOOR_MATERIALS, CEILING_MATERIALS,
+    SPACE_VISUAL_GUIDE, WALL_MATERIAL_VISUAL_GUIDE, FLOOR_MATERIAL_VISUAL_GUIDE, CEILING_MATERIAL_VISUAL_GUIDE
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ def build_full_prompt() -> str:
 ▼ 可识别的顶面材质（仅选其一）：
 {CEILING_MATERIALS}
 
+{''.join([SPACE_VISUAL_GUIDE, WALL_MATERIAL_VISUAL_GUIDE, FLOOR_MATERIAL_VISUAL_GUIDE, CEILING_MATERIAL_VISUAL_GUIDE])}
+
 要求：
 1. 所有字段必须从上方列表中精确选择名称，禁止造词、改字、写错别字
 2. 如果图片中的材质不在列表内，选最接近的，不要填"未知"
@@ -58,7 +61,7 @@ def build_full_prompt() -> str:
 输出：{{"space_type": "客厅", "wall_material": "乳胶漆", "floor_material": "地砖", "ceiling_material": "石膏板吊顶", "decor_style": "现代简约", "remark": ""}}
 
 示例2：一张卧室效果图
-输出：{{"space_type": "主卧", "wall_material": "墙布", "floor_material": "实木复合地板", "ceiling_material": "石膏板吊顶", "decor_style": "轻奢", "remark": ""}}
+输出：{{"space_type": "卧室", "wall_material": "墙布", "floor_material": "木地板", "ceiling_material": "玻璃顶", "decor_style": "轻奢", "remark": ""}}
 
 {{{{
   "space_type": "<从空间类型列表中选择>",
@@ -77,6 +80,8 @@ def build_crop_prompt(field: str) -> str:
     prompts = {
         "wall_material": f"""你是室内装修材料识别专家。请仔细分析这张**墙面局部图**，识别墙面材质。
 
+{''.join([WALL_MATERIAL_VISUAL_GUIDE])}
+
 ▼ 可选墙面材质（严格从中选择，禁止编造）：
 {WALL_MATERIALS}
 
@@ -84,6 +89,8 @@ def build_crop_prompt(field: str) -> str:
 {{{{"wall_material": "<从上面列表中选择>"}}}}""",
 
         "floor_material": f"""你是室内装修材料识别专家。请仔细分析这张**地面局部图**，识别地面材质。
+
+{''.join([FLOOR_MATERIAL_VISUAL_GUIDE])}
 
 ▼ 可选地面材质（严格从中选择，禁止编造）：
 {FLOOR_MATERIALS}
@@ -93,6 +100,8 @@ def build_crop_prompt(field: str) -> str:
 
         "ceiling_material": f"""你是室内装修材料识别专家。请仔细分析这张**顶面/吊顶局部图**，识别顶面材质。
 
+{''.join([CEILING_MATERIAL_VISUAL_GUIDE])}
+
 ▼ 可选顶面材质（严格从中选择，禁止编造）：
 {CEILING_MATERIALS}
 
@@ -100,7 +109,9 @@ def build_crop_prompt(field: str) -> str:
 {{{{"ceiling_material": "<从上面列表中选择>"}}}}""",
 
         "full": f"""你是一位专业的室内装修材料识别专家。请仔细分析这张**家装效果图**，识别的空间类型。
-        
+
+{''.join([SPACE_VISUAL_GUIDE])}
+  
 ▼ 可选空间类型（严格从中选择，禁止编造）：
 {SPACE_TYPES}
 

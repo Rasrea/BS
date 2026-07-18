@@ -7,16 +7,37 @@
         不经过数据库、不经过融合流程，纯诊断用途，方便对比不同模型效果。
       </p>
 
-      <!-- 模型选择 -->
-      <div class="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
-        <span class="text-xs text-gray-500">🧠 测试模型:</span>
-        <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
-          <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
-            {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
-          </option>
-        </select>
-        <span v-if="activeModel === selectedModel" class="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">系统当前在用</span>
-        <span v-else class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">仅测试用</span>
+      <!-- 模型选择和裁剪开关 -->
+      <div class="flex flex-wrap items-center gap-3 mb-4 p-3 bg-gray-50 rounded-lg">
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-gray-500">🧠 测试模型:</span>
+          <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
+            <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
+              {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
+            </option>
+          </select>
+          <span v-if="activeModel === selectedModel" class="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">系统当前在用</span>
+          <span v-else class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">仅测试用</span>
+        </div>
+        
+        <div class="flex items-center gap-2 pl-3 border-l border-gray-300">
+          <span class="text-xs text-gray-500">✂️ 分区域裁剪:</span>
+          <button
+            @click="cropEnabled = !cropEnabled"
+            class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
+            :class="cropEnabled ? 'bg-primary-500' : 'bg-gray-300'"
+          >
+            <span class="sr-only">切换裁剪识别</span>
+            <span
+              class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform"
+              :class="cropEnabled ? 'translate-x-5' : 'translate-x-0.5'"
+            />
+          </button>
+          <span class="text-[10px]" :class="cropEnabled ? 'text-green-600 bg-green-50' : 'text-gray-400 bg-gray-100'">
+            {{ cropEnabled ? '启用' : '关闭' }}
+          </span>
+          <span class="text-[10px] text-gray-400">将图像分为天花板/墙面/地面分别识别</span>
+        </div>
       </div>
 
       <!-- 上传区域 -->
@@ -108,7 +129,7 @@
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">顶面</th>
                 
                 <!-- TODO -->
-                <th class="text-center py-1.5 px-2 font-medium text-gray-500">准确率</th>
+                <!-- <th class="text-center py-1.5 px-2 font-medium text-gray-500">准确率</th> -->
               
               </tr>
             </thead>
@@ -254,6 +275,7 @@ const selectedModel = ref('qwen2.5:7b')
 const activeModel = ref('')
 const availableModels = ref([])
 const doneCount = ref(0)
+const cropEnabled = ref(true)  // 默认开启裁剪识别
 
 const stats = computed(() => {
   const successful = results.value.filter(r => r.success)
@@ -447,6 +469,7 @@ async function startBatchTest() {
     const fd = new FormData()
     fd.append('image_file', f.file)
     fd.append('model', selectedModel.value)
+    fd.append('crop_enabled', cropEnabled.value)  // 裁剪开关
     const res = await API.post('/vision_test', fd)
 
     const entry = {
