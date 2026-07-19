@@ -552,9 +552,10 @@ async def vision_test(
     - 返回各步骤耗时 + 原始模型响应
     - crop_enabled: "true" 启用分区域裁剪识别（ceiling/wall/floor），提高识别精度；"false" 禁用
     """
+    
     if not image_file:
         return err(400, "请上传图片（jpg/png/webp）")
-
+        
     content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "图片")
     task_id = uuid.uuid4().hex[:8]
     save_path = UPLOAD_DIR / f"{task_id}_test{ext}"
@@ -602,6 +603,14 @@ async def vision_test(
 
     t_total = round(time.time() - t_total, 3)
 
+    from vision_harness.similarity import get_expect_pretect, evaluate_similarity
+    
+    # 获取测试标签和预测值
+    expected, predicted = get_expect_pretect(image_file.filename, data["structured"])
+    
+    # 计算图片相似度
+    similarity_json = evaluate_similarity(expected, predicted)
+    
     # 清理临时文件
     try:
         os.remove(save_path)
@@ -631,9 +640,11 @@ async def vision_test(
             "processed_size_kb": round(stats["processed_size_kb"], 1),
         },
         "raw_result": data,
+        "similarity": similarity_json,
     }
 
-    return ok(result)
+    return ok(result)    
+    
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
     """PDF施工图识别：PDF→图片→复用LLaVA识别"""

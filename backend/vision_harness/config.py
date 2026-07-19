@@ -57,6 +57,12 @@ CROP_STRATEGY_PANORAMA = {
     "floor":   {"y": (0.60, 1.00), "zoom": True},
 }
 
+CROP_STRATEGY_CLOSEUP = {
+    "ceiling": {"y": (0.00, 0.20), "zoom": True},
+    "wall":    {"y": (0.15, 0.70), "zoom": True},
+    "floor":   {"y": (0.65, 1.00), "zoom": True},
+}
+
 
 # 模型输入预处理
 MAX_IMAGE_DIM = 1024       # 最长边像素
