@@ -146,10 +146,7 @@
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">墙面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">地面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">顶面</th>
-                
-                <!-- TODO -->
-                <!-- <th class="text-center py-1.5 px-2 font-medium text-gray-500">准确率</th> -->
-              
+                <th class="text-center py-1.5 px-2 font-medium text-gray-500">相似度</th>
               </tr>
             </thead>
             <tbody>
@@ -161,6 +158,11 @@
                 <td class="py-1.5 px-2 text-center">{{ r.wall || '-' }}</td>
                 <td class="py-1.5 px-2 text-center">{{ r.floor || '-' }}</td>
                 <td class="py-1.5 px-2 text-center">{{ r.ceiling || '-' }}</td>
+                <td class="py-1.5 px-2 text-center">
+                  <span :class="similarityColor(r.similarity)">
+                    {{ r.similarity || '-' }}
+                  </span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -186,18 +188,22 @@
       <!-- 统计汇总 -->
       <div v-if="results.length > 0" class="card mb-3">
         <h4 class="text-xs font-semibold text-gray-600 mb-2">⏱️ 性能统计（{{ selectedModel }}）</h4>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-4 gap-2">
           <div class="text-center p-2 bg-blue-50 rounded">
             <div class="text-lg font-bold text-blue-700">{{ stats.totalTime }}s</div>
             <div class="text-[9px] text-gray-500">总耗时</div>
           </div>
           <div class="text-center p-2 bg-green-50 rounded">
             <div class="text-lg font-bold text-green-700">{{ stats.avgTime }}s</div>
-            <div class="text-[9px] text-gray-500">平均耗时（去极值）</div>
+            <div class="text-[9px] text-gray-500">平均耗时</div>
           </div>
           <div class="text-center p-2 bg-purple-50 rounded">
             <div class="text-lg font-bold text-purple-700">{{ stats.testCount }}</div>
             <div class="text-[9px] text-gray-500">测试数量</div>
+          </div>
+          <div class="text-center p-2 bg-orange-50 rounded">
+            <div class="text-lg font-bold text-orange-700">{{ stats.avgSimilarity }}%</div>
+            <div class="text-[9px] text-gray-500">平均相似度</div>
           </div>
         </div>
       </div>
@@ -354,11 +360,37 @@ const stats = computed(() => {
   const avgSec = trimmedTimes.length > 0 
     ? trimmedTimes.reduce((sum, t) => sum + t, 0) / trimmedTimes.length 
     : 0
+
+  // 计算平均相似度（去除极值）
+  const similarities = successful
+    .map(r => {
+      const sim = r.similarity
+      if (!sim) return null
+      const num = typeof sim === 'string' ? parseFloat(sim) : sim
+      return isNaN(num) ? null : num
+    })
+    .filter(s => s !== null)
+  
+  let avgSimStr = '0.00'
+  if (similarities.length > 0) {
+    const sortedSims = similarities.sort((a, b) => a - b)
+    let trimmedSims = sortedSims
+    
+    if (sortedSims.length > 2) {
+      trimmedSims = sortedSims.slice(1, -1)
+    }
+    
+    if (trimmedSims.length > 0) {
+      const avgSim = trimmedSims.reduce((sum, s) => sum + s, 0) / trimmedSims.length
+      avgSimStr = avgSim.toFixed(2)
+    }
+  }
   
   return {
     totalTime: totalSec.toFixed(2),
     avgTime: avgSec.toFixed(2),
-    testCount: successful.length
+    testCount: successful.length,
+    avgSimilarity: avgSimStr
   }
 })
 
@@ -409,8 +441,18 @@ function clearAll() {
 }
 
 function timingColor(sec) {
-  if (sec < 6) return 'text-green-600'
+  if (sec < 7) return 'text-green-600'
   if (sec < 10) return 'text-yellow-600'
+  return 'text-red-600'
+}
+
+// 根据相似度高低显示不同颜色
+function similarityColor(sim) {
+  if (!sim) return 'text-gray-400'
+  // 如果是字符串格式（如 "85.0%"），先提取数字
+  const num = typeof sim === 'string' ? parseFloat(sim) : sim
+  if (num >= 70) return 'text-green-600 font-semibold'
+  if (num >= 60) return 'text-yellow-600'
   return 'text-red-600'
 }
 
@@ -449,6 +491,7 @@ function exportAsCSV(results, filename) {
     '墙面材料',
     '地面材料',
     '顶面材料',
+    '相似度',
     '测试结果'
   ]
 
@@ -463,6 +506,7 @@ function exportAsCSV(results, filename) {
     `"${r.wall || '-'}"`,
     `"${r.floor || '-'}"`,
     `"${r.ceiling || '-'}"`,
+    `"${r.similarity || '-'}"`,
     r.success ? '成功' : '失败'
   ])
 
@@ -493,6 +537,7 @@ function exportAsJSON(results, statsData, filename) {
       wall: r.wall,
       floor: r.floor,
       ceiling: r.ceiling,
+      similarity: r.similarity,
       success: r.success,
       rawData: r.rawData
     }))
@@ -563,6 +608,8 @@ async function startBatchTest() {
         entry.ceiling = sr.ceiling_material || '-'
       }
       entry.success = !!sr
+      entry.similarity = d.similarity ? (d.similarity.overall_similarity * 100).toFixed(1) + '%' : null
+
     } else {
       entry.rawData = { error: res.message || '请求失败' }
     }

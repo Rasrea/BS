@@ -19,7 +19,7 @@ from vision_harness.config import (
     CROP_RATIOS, MAX_IMAGE_DIM, JPEG_QUALITY,
     CROP_MAX_DIM, CROP_ZOOM_CONFIG,
     VIEW_NEAR_RATIO_LOW, VIEW_NEAR_RATIO_HIGH, VIEW_PANORAMA_RATIO,
-    CROP_STRATEGY_PERSPECTIVE, CROP_STRATEGY_PANORAMA,
+    CROP_STRATEGY_PERSPECTIVE, CROP_STRATEGY_PANORAMA, CROP_STRATEGY_CLOSEUP
 )
 
 logger = logging.getLogger(__name__)
@@ -171,21 +171,17 @@ class ImagePreprocessor:
 
         返回:
             {"ceiling": "base64...", "wall": "base64...", "floor": "base64..."}
-            如果是 closeup 视图，返回空 dict（不裁剪）
         """
         img = self.load_image(image_path)
 
         # 检测视图类型
         view_type = force_strategy or self.detect_view_type(img)
 
-        # 近景/局部图 → 不裁剪（全图推理即可）
-        if view_type == "closeup":
-            logger.info("视图类型=近景/局部图，跳过裁剪")
-            return {}
-
         # 选择策略
         if view_type == "panorama":
             strategy = CROP_STRATEGY_PANORAMA
+        elif view_type == "closeup":
+            strategy = CROP_STRATEGY_CLOSEUP
         else:
             strategy = CROP_STRATEGY_PERSPECTIVE
 
