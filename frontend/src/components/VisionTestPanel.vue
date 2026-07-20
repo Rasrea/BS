@@ -1,5 +1,113 @@
 <template>
   <div>
+    <!-- 模型管理面板 -->
+    <div class="card mb-4">
+      <div class="flex items-center justify-between cursor-pointer" @click="showModelManager = !showModelManager">
+        <h3 class="text-sm font-semibold text-gray-700">🧩 模型管理</h3>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-gray-400" v-if="customModels.length > 0">{{ customModels.length }} 个自定义</span>
+          <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{'rotate-180': showModelManager}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+      </div>
+    
+      <div v-if="showModelManager" class="mt-3">
+        <div class="flex justify-end mb-2">
+          <button
+            @click.stop="showAddModel = !showAddModel"
+            class="text-xs px-3 py-1.5 bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 font-medium"
+          >
+            {{ showAddModel ? '收起' : '+ 添加模型' }}
+          </button>
+        </div>
+    
+        <!-- 添加模型表单 -->
+      <div v-if="showAddModel" class="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <h4 class="text-xs font-semibold text-gray-600 mb-2">添加自定义模型</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型标识 *</label>
+            <input v-model="newModel.model_key" placeholder="如: dashscope:my-model 或 my-local-model"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 block mb-0.5">显示名称 *</label>
+            <input v-model="newModel.label" placeholder="如: 我的自定义模型"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型类型</label>
+            <select v-model="newModel.model_type" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-white">
+              <option value="local">本地 (Ollama)</option>
+              <option value="cloud">云端 (API)</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 block mb-0.5">排序权重</label>
+            <input v-model.number="newModel.sort_order" type="number" placeholder="100"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div v-if="newModel.model_type === 'cloud'">
+            <label class="text-[10px] text-gray-500 block mb-0.5">API Base URL</label>
+            <input v-model="newModel.api_base_url" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div v-if="newModel.model_type === 'cloud'">
+            <label class="text-[10px] text-gray-500 block mb-0.5">API Token（可选，留空用系统默认）</label>
+            <input v-model="newModel.api_token" type="password" placeholder="sk-xxxxx"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-[10px] text-gray-500 block mb-0.5">描述</label>
+            <input v-model="newModel.description" placeholder="可选描述信息"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+        </div>
+        <div class="flex items-center gap-2 mt-3">
+          <button @click="addCustomModel" :disabled="addingModel"
+                  class="text-xs px-4 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50">
+            {{ addingModel ? '添加中...' : '确认添加' }}
+          </button>
+          <button @click="showAddModel = false" class="text-xs px-3 py-1.5 text-gray-500 hover:text-gray-700">取消</button>
+          <span v-if="addModelMsg" class="text-[10px]" :class="addModelMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ addModelMsg }}</span>
+        </div>
+      </div>
+
+        <!-- 自定义模型列表 -->
+      <div v-if="customModels.length > 0">
+          <div class="text-[10px] text-gray-400 mb-1.5">已添加 {{ customModels.length }} 个自定义模型</div>
+          <div class="space-y-1.5">
+            <div v-for="cm in customModels" :key="cm.id"
+                 class="flex items-center justify-between p-2 bg-white border border-gray-100 rounded-lg hover:border-gray-200">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                    :class="cm.model_type === 'cloud' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'">
+                {{ cm.model_type === 'cloud' ? '☁️ 云端' : '💻 本地' }}
+              </span>
+              <span class="text-xs font-medium text-gray-700 truncate">{{ cm.label }}</span>
+              <span class="text-[10px] text-gray-400 truncate">{{ cm.model_key }}</span>
+            </div>
+              <button @click.stop="toggleModelEnabled(cm)"
+                      :disabled="togglingId === cm.id"
+                      class="text-[10px] px-2 py-0.5 rounded disabled:opacity-50"
+                      :class="cm.is_enabled ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'">
+                {{ togglingId === cm.id ? '...' : (cm.is_enabled ? '✓ 已启用' : '✗ 已禁用') }}
+              </button>
+              <button @click.stop="deleteCustomModel(cm)"
+                      :disabled="togglingId === cm.id"
+                      class="text-[10px] px-2 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100 disabled:opacity-50">
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="!showAddModel" class="text-[10px] text-gray-400 text-center py-2">
+          暂无自定义模型，点击「+ 添加模型」开始添加
+        </div>
+      </div>
+    </div>
+
     <div class="card mb-4">
       <h3 class="text-sm font-semibold text-gray-700 mb-3">🔬 视觉模型独立测试</h3>
       <p class="text-xs text-gray-500 mb-3">
@@ -146,10 +254,10 @@
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">墙面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">地面</th>
                 <th class="text-center py-1.5 px-2 font-medium text-gray-500">顶面</th>
-                
+
                 <!-- TODO -->
                 <!-- <th class="text-center py-1.5 px-2 font-medium text-gray-500">准确率</th> -->
-              
+
               </tr>
             </thead>
             <tbody>
@@ -169,13 +277,13 @@
 
       <!-- 在统计汇总卡片之前添加 -->
       <div v-if="results.length > 0" class="flex items-center justify-end gap-2 mb-2">
-        <button 
+        <button
           class="text-xs px-3 py-1.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
           @click="exportResults('csv')"
         >
           📥 导出 CSV
         </button>
-        <button 
+        <button
           class="text-xs px-3 py-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors"
           @click="exportResults('json')"
         >
@@ -292,20 +400,107 @@ const results = ref([])
 const previewIndex = ref(0)
 const selectedModel = ref('qwen2.5:7b')
 const activeModel = ref('')
-const availableModels = ref([])// 这个现在存的是后端返回的全量列表
+const availableModels = ref([])
 const doneCount = ref(0)
 
-// ========== 新增：环境切换状态 ==========
-// 默认使用本地模型（false），切换云端为 true
+// ========== 新增：模型管理 ==========
+const showModelManager = ref(false)
+const showAddModel = ref(false)
+const togglingId = ref(null)
+const addingModel = ref(false)
+const addModelMsg = ref('')
+const addModelMsgType = ref('success')
+const customModels = ref([])
+const newModel = ref({
+  model_key: '',
+  label: '',
+  model_type: 'local',
+  api_base_url: '',
+  api_token: '',
+  description: '',
+  sort_order: 100,
+})
+
+async function loadCustomModels() {
+  const res = await API.get('/settings/vl_model/custom')
+  if (res.success && res.data) {
+    customModels.value = res.data.models || []
+  }
+}
+
+async function addCustomModel() {
+  if (!newModel.value.model_key || !newModel.value.label) {
+    addModelMsg.value = '模型标识和显示名称不能为空'
+    addModelMsgType.value = 'error'
+    return
+  }
+  addingModel.value = true
+  addModelMsg.value = ''
+  const fd = new FormData()
+  fd.append('model_key', newModel.value.model_key)
+  fd.append('label', newModel.value.label)
+  fd.append('model_type', newModel.value.model_type)
+  fd.append('api_base_url', newModel.value.api_base_url)
+  fd.append('api_token', newModel.value.api_token)
+  fd.append('description', newModel.value.description)
+  fd.append('sort_order', newModel.value.sort_order)
+  const res = await API.post('/settings/vl_model/custom', fd)
+  if (res.success) {
+    addModelMsg.value = `模型 ${newModel.value.label} 添加成功`
+    addModelMsgType.value = 'success'
+    newModel.value = { model_key: '', label: '', model_type: 'local', api_base_url: '', api_token: '', description: '', sort_order: 100 }
+    await loadCustomModels()
+    await reloadModels()
+  } else {
+    addModelMsg.value = res.message || '添加失败'
+    addModelMsgType.value = 'error'
+  }
+  addingModel.value = false
+  setTimeout(() => addModelMsg.value = '', 3000)
+}
+
+async function toggleModelEnabled(cm) {
+  if (togglingId.value === cm.id) return
+  togglingId.value = cm.id
+  const fd = new FormData()
+  fd.append('is_enabled', cm.is_enabled ? 0 : 1)
+  const res = await API.put(`/settings/vl_model/custom/${cm.id}`, fd)
+  if (res.success) {
+    cm.is_enabled = cm.is_enabled ? 0 : 1
+    await loadCustomModels()
+    await reloadModels()
+  } else {
+    alert(res.message || '操作失败')
+  }
+  togglingId.value = null
+}
+
+async function deleteCustomModel(cm) {
+  if (!confirm(`确定要删除模型「${cm.label}」吗？`)) return
+  const res = await API.delete(`/settings/vl_model/custom/${cm.id}`)
+  if (res.success) {
+    await loadCustomModels()
+    await reloadModels()
+  } else {
+    alert(res.message || '删除失败')
+  }
+}
+
+async function reloadModels() {
+  const res = await API.get('/settings/vl_model')
+  if (res.success && res.data) {
+    activeModel.value = res.data.active_model
+    availableModels.value = res.data.available_models || []
+  }
+}
+
+// ========== 环境切换 ==========
 const useCloud = ref(false)
 
 // 计算属性：根据开关状态过滤模型列表
 const filteredModels = computed(() => {
   return availableModels.value.filter(m => {
-    // 判断是否为云端模型（你的后端逻辑是 dashscope: 开头）
-    const isCloudModel = m.key.startsWith('dashscope:')
-    // 如果开关是云端，只返回云端模型；否则只返回本地模型
-    return useCloud.value ? isCloudModel : !isCloudModel
+    return useCloud.value ? m.is_cloud : !m.is_cloud
   })
 })
 
@@ -331,7 +526,7 @@ const testEnvStatus = computed(() => {
   const current = files.value.find(f => f.testing)
   return `${env}测试 ${done + 1}/${total}: ${current?.name || '...'}`
 })
-// ========== 新增结束 ==========
+
 const cropEnabled = ref(true)  // 默认开启裁剪识别
 
 const stats = computed(() => {
@@ -339,22 +534,22 @@ const stats = computed(() => {
   if (successful.length === 0) {
     return { totalTime: '0.00', avgTime: '0.00', testCount: 0 }
   }
-  
+
   // 计算总时间
   const totalSec = successful.reduce((sum, r) => sum + r.total, 0)
-  
+
   // 去除最大值和最小值后计算平均
   const times = successful.map(r => r.total).sort((a, b) => a - b)
   let trimmedTimes = times
-  
+
   if (times.length > 2) {
     trimmedTimes = times.slice(1, -1) // 去掉第一个（最小）和最后一个（最大）
   }
-  
-  const avgSec = trimmedTimes.length > 0 
-    ? trimmedTimes.reduce((sum, t) => sum + t, 0) / trimmedTimes.length 
+
+  const avgSec = trimmedTimes.length > 0
+    ? trimmedTimes.reduce((sum, t) => sum + t, 0) / trimmedTimes.length
     : 0
-  
+
   return {
     totalTime: totalSec.toFixed(2),
     avgTime: avgSec.toFixed(2),
@@ -376,12 +571,13 @@ onMounted(async () => {
     activeModel.value = res.data.active_model
     selectedModel.value = res.data.active_model
     availableModels.value = res.data.available_models || []
-  // 【可选优化】根据当前系统模型，初始化开关状态
-    // 如果系统正在用云端模型，开关就拨到云端
-    if (res.data.active_model?.startsWith('dashscope:')) {
-      useCloud.value = true
+    // 根据当前选中模型的 is_cloud 字段判断环境，兼容自定义云端模型
+    const currentModel = availableModels.value.find(m => m.key === res.data.active_model)
+    if (currentModel) {
+      useCloud.value = !!currentModel.is_cloud
     }
   }
+  await loadCustomModels()
 })
 
 function onFilesChange(e) {

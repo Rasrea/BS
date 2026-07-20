@@ -1414,6 +1414,7 @@ async def get_vl_model():
                 "installed": bool(dashscope_key),  # 有API Key就可用
                 "active": key == active,
                 "is_cloud": True,  # 标记云端，方便前端区分
+                "is_custom": False,#告诉前端这不是数据库里的自定义模型
             })
         else:
             available.append({
@@ -1421,6 +1422,8 @@ async def get_vl_model():
                 "label": label,
                 "installed": key in local_models,
                 "active": key == active,
+                "is_cloud": False,
+                "is_custom": False,
             })
 
     # 也列出其他本地可用的可能视觉模型
@@ -1431,8 +1434,33 @@ async def get_vl_model():
                 "label": f"{m}（本地可用）",
                 "installed": True,
                 "active": m == active,
+                "is_cloud": False,
+                "is_custom": False,
             })
 
+    #获取数据库中已经启用的模型，并组装成字典
+    custom_models = await db.get_custom_vl_models()
+    for cm in custom_models:
+        if not cm.get("is_enabled", 1):
+            continue
+        model_key = cm["model_key"]
+        is_cloud = cm.get("model_type", "local") == "cloud"
+        if is_cloud:
+            #云端只要有key就算可用。key可以是数据库里单独配的 (cm.get("api_token"))，也可以是系统默认的 (dashscope_key)。
+            installed = bool(cm.get("api_token") or dashscope_key)
+        else:
+            #本地模型问 Ollama ，local_models 列表里有这个模型吗
+            installed = model_key in local_models
+        available.append({
+            "key": model_key,
+            "label": cm.get("label", model_key),
+            "installed": installed,
+            "active": model_key == active,
+            "is_cloud": is_cloud,
+            "is_custom": True,
+            "custom_id": cm["id"],
+            "description": cm.get("description", ""),
+        })
     return ok({
         "active_model": active,
         "available_models": available,
@@ -1452,11 +1480,17 @@ async def set_vl_model(
     dashscope_key = DASHSCOPE_API_TOKEN
 
     if model.startswith("dashscope:"):
-        # 云端模型只需要检查API Key
+        # 内置云百炼模型只需要检查API Key
         if not dashscope_key:
-            return err(400, "切换云百炼模型前请先配置 dashscope_api_key")
+            custom_models = await db.get_custom_vl_models()
+            custom_match = next((cm for cm in custom_models if cm["model_key"] == model), None)
+            if not custom_match or not custom_match.get("api_token"):
+                return err(400, "切换云百炼模型前请先配置 dashscope_api_key 或自定义模型的 API Token")
         # 云端模型不需要检查本地Ollama，直接放行
     elif model not in SUPPORTED_VL_MODELS:
+        # 检查模型是否在数据库中自定义列表中
+        custom_models = await db.get_custom_vl_models()
+        custom_keys = {cm["model_key"] for cm in custom_models}
         # 允许切换为本地安装的其他模型
         try:
             import requests
@@ -1552,6 +1586,108 @@ async def test_vl_model():
                 return ok({"status": "error", "detail": f"HTTP {r.status_code}"})
         except Exception as e:
             return ok({"status": "error", "detail": str(e)})
+
+
+# ─────────────────── 新增接口：自定义视觉模型 CRUD ───────────────────
+
+@app.get("/api/settings/vl_model/custom")
+async def list_custom_vl_models():
+    """查询所有自定义视觉模型"""
+    models = await db.get_custom_vl_models()
+    return ok({"models": models})
+
+
+@app.post("/api/settings/vl_model/custom")
+async def create_custom_vl_model(
+    model_key: str = Form(...),
+    label: str = Form(...),
+    model_type: str = Form("local"),
+    api_base_url: str = Form(""),
+    api_token: str = Form(""),
+    description: str = Form(""),
+    sort_order: int = Form(100),
+):
+    """新增自定义视觉模型"""
+    if task_state.state != STATE_IDLE:
+        return err(409, "系统忙，无法修改模型配置")
+    if not model_key or not label:
+        return err(400, "模型标识和显示名称不能为空")
+    if model_type not in ("local", "cloud"):
+        return err(400, "模型类型必须为 local 或 cloud")
+    if model_type == "cloud" and not api_base_url:
+        api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    all_keys = set(VL_MODEL_OPTIONS.keys())
+    custom_models = await db.get_custom_vl_models()
+    for cm in custom_models:
+        all_keys.add(cm["model_key"])
+    if model_key in all_keys:
+        return err(400, f"模型标识 '{model_key}' 已存在，请使用其他名称")
+
+    mid = await db.add_custom_vl_model(
+        model_key=model_key, label=label, model_type=model_type,
+        api_base_url=api_base_url, api_token=api_token,
+        description=description, sort_order=sort_order,
+    )
+    await db.add_log("config", operation_action=f"custom_model_add:{model_key}({label})")
+    return ok({"id": mid, "model_key": model_key}, message=f"模型 {label} 添加成功")
+
+
+@app.put("/api/settings/vl_model/custom/{mid}")
+async def update_custom_vl_model(
+    mid: int,
+    label: str = Form(None),
+    model_type: str = Form(None),
+    api_base_url: str = Form(None),
+    api_token: str = Form(None),
+    description: str = Form(None),
+    sort_order: int = Form(None),
+    is_enabled: int = Form(None),
+):
+    """修改自定义视觉模型"""
+    if task_state.state != STATE_IDLE:
+        return err(409, "系统忙，无法修改模型配置")
+    updates = {}
+    if label is not None:
+        updates["label"] = label
+    if model_type is not None:
+        if model_type not in ("local", "cloud"):
+            return err(400, "模型类型必须为 local 或 cloud")
+        updates["model_type"] = model_type
+    if api_base_url is not None:
+        updates["api_base_url"] = api_base_url
+    if api_token is not None:
+        updates["api_token"] = api_token
+    if description is not None:
+        updates["description"] = description
+    if sort_order is not None:
+        updates["sort_order"] = sort_order
+    if is_enabled is not None:
+        updates["is_enabled"] = is_enabled
+    if not updates:
+        return err(400, "没有需要更新的字段")
+
+    await db.update_custom_vl_model(mid, **updates)
+    return ok({"id": mid}, message="模型更新成功")
+
+
+@app.delete("/api/settings/vl_model/custom/{mid}")
+async def delete_custom_vl_model(mid: int):
+    """删除自定义视觉模型（逻辑删除）"""
+    if task_state.state != STATE_IDLE:
+        return err(409, "系统忙，无法修改模型配置")
+    models = await db.get_custom_vl_models()
+    target = next((m for m in models if m["id"] == mid), None)
+    if not target:
+        return err(404, "模型不存在")
+
+    active = (await db.get_settings()).get("active_vl_model", "")
+    if active == target["model_key"]:
+        return err(400, f"模型 '{target['label']}' 正在使用中，请先切换到其他模型再删除")
+
+    await db.delete_custom_vl_model(mid)
+    await db.add_log("config", operation_action=f"custom_model_delete:{target['model_key']}")
+    return ok({"deleted_id": mid}, message=f"模型 {target['label']} 已删除")
 
 
 # ─────────────────── 接口：施工工序管理 ───────────────────

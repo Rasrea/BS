@@ -98,7 +98,7 @@
             <span class="text-xs font-semibold text-primary-700 bg-primary-50 px-2 py-1 rounded">{{ activeModel }}</span>
             <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
               <option v-for="m in filteredModels" :key="m.key" :value="m.key" :disabled="!m.installed">
-                {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
+                {{ m.label }}{{ m.is_custom ? ' ★' : '' }}{{ !m.installed ? ' (未安装)' : '' }}
               </option>
             </select>
             <button class="text-xs px-2 py-1 rounded font-medium"
@@ -443,8 +443,7 @@ const useCloud = ref(false)
 
 const filteredModels = computed(() => {
   return availableModels.value.filter(m => {
-    const isCloudModel = m.key.startsWith('dashscope:')
-    return useCloud.value ? isCloudModel : !isCloudModel
+    return useCloud.value ? m.is_cloud : !m.is_cloud
   })
 })
 
@@ -475,8 +474,10 @@ async function loadVlModels() {
     activeModel.value = res.data.active_model
     selectedModel.value = res.data.active_model
     availableModels.value = res.data.available_models || []
-    if (res.data.active_model?.startsWith('dashscope:')) {
-      useCloud.value = true
+    // 根据当前选中模型的 is_cloud 字段判断环境，兼容自定义云端模型
+    const currentModel = availableModels.value.find(m => m.key === res.data.active_model)
+    if (currentModel) {
+      useCloud.value = !!currentModel.is_cloud
     }
   }
 }

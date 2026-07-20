@@ -144,8 +144,15 @@ class ModelInferrer:
         self.chat_url = self.base_url + OLLAMA_API_CHAT
         self.timeout = timeout or OLLAMA_TIMEOUT
         self._full_prompt: str | None = None
-        # 连接池
-        self._session = requests.Session()  
+        self._session = requests.Session()
+        self._custom_model_config: dict | None = None
+
+    def set_custom_model_config(self, api_base_url: str = "", api_token: str = ""):
+        """设置自定义模型的 API 配置（用于覆盖默认环境变量）"""
+        self._custom_model_config = {
+            "api_base_url": api_base_url,
+            "api_token": api_token,
+        }
 
     @property
     def full_prompt(self) -> str:
@@ -169,43 +176,47 @@ class ModelInferrer:
         返回:
             模型原始输出文本
         """
-        # ===== 情况 1: 云百炼逻辑 =====
+        # ===== 情况 1: 支持多配置源的云端模型调用，现在不止支持内置列表中的云百炼，兼容任何云平台 =====
         if model.startswith("dashscope:"):
-            # 提取真实模型名，如 "dashscope:qwen-vl-plus" -> "qwen-vl-plus"
             actual_model = model.replace("dashscope:", "")
-            if not DASHSCOPE_API_TOKEN:
-                raise ValueError("DASHSCOPE_API_TOKEN 未配置，请在环境变量中设置。")
-            url = f"{DASHSCOPE_BASE_URL}{DASHSCOPE_API_CHAT}"
+            
+            base_url = DASHSCOPE_BASE_URL
+            api_token = DASHSCOPE_API_TOKEN
+            if self._custom_model_config:
+                if self._custom_model_config.get("api_base_url"):
+                    base_url = self._custom_model_config["api_base_url"]
+                if self._custom_model_config.get("api_token"):
+                    api_token = self._custom_model_config["api_token"]
+
+            if not api_token:
+                raise ValueError("API Token 未配置，请在环境变量或自定义模型配置中设置。")
+            url = f"{base_url}{DASHSCOPE_API_CHAT}"
             headers = {
-                "Authorization": f"Bearer {DASHSCOPE_API_TOKEN}",
+                "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json"
             }
             image_url_data = f"data:image/jpeg;base64,{image_base64}"
 
             payload = {
                 "model": actual_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": image_url_data}},
-                            {"type": "text", "text": prompt}
-                        ]
-                    }
-                ],
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_url_data}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }],
                 "temperature": OLLAMA_TEMPERATURE,
                 "stream": False
             }
 
-            logger.info(f"Calling DashScope API: {actual_model}")
+            logger.info(f"Calling Cloud API: {actual_model} @ {base_url}")
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
             resp.raise_for_status()
 
             data = resp.json()
-            # 提取文本内容（适配 DashScope 的返回格式）
-            # 格式: data['choices'][0]['message']['content']
             return data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        # ===== 情况 2: Ollama 本地 (未进行任何修改)=====
+        # ===== 情况 2: Ollama 本地 =====
         else:
             payload = {
                 "model": model,
