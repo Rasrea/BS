@@ -97,8 +97,8 @@
             <span class="text-xs text-gray-500">🧠 视觉模型:</span>
             <span class="text-xs font-semibold text-primary-700 bg-primary-50 px-2 py-1 rounded">{{ activeModel }}</span>
             <select v-model="selectedModel" class="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white">
-              <option v-for="m in availableModels" :key="m.key" :value="m.key" :disabled="!m.installed">
-                {{ m.label }}{{ !m.installed ? ' (未安装)' : '' }}
+              <option v-for="m in filteredModels" :key="m.key" :value="m.key" :disabled="!m.installed">
+                {{ m.label }}{{ m.is_custom ? ' ★' : '' }}{{ !m.installed ? ' (未安装)' : '' }}
               </option>
             </select>
             <button class="text-xs px-2 py-1 rounded font-medium"
@@ -108,6 +108,22 @@
               {{ vlSaving ? '切换中...' : '切换' }}
             </button>
             <span v-if="vlMsg" class="text-xs" :class="vlMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ vlMsg }}</span>
+
+            <!-- 环境切换开关 -->
+            <div class="flex items-center gap-1.5 pl-2 border-l border-gray-200 shrink-0">
+              <span class="text-[10px]" :class="useCloud ? 'text-gray-300' : 'text-gray-500 font-medium'">本地</span>
+              <button
+                @click="toggleEnv"
+                class="relative inline-flex h-4 w-7 items-center rounded-full transition-colors focus:outline-none"
+                :class="useCloud ? 'bg-blue-500' : 'bg-gray-300'"
+              >
+                <span
+                  class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"
+                  :class="useCloud ? 'translate-x-3.5' : 'translate-x-0.5'"
+                />
+              </button>
+              <span class="text-[10px]" :class="useCloud ? 'text-blue-600 font-medium' : 'text-gray-300'">云端</span>
+            </div>
           </div>
         </div>
 
@@ -423,6 +439,23 @@ const availableModels = ref([])
 const vlMsg = ref('')
 const vlMsgType = ref('success')
 
+const useCloud = ref(false)
+
+const filteredModels = computed(() => {
+  return availableModels.value.filter(m => {
+    return useCloud.value ? m.is_cloud : !m.is_cloud
+  })
+})
+
+function toggleEnv() {
+  useCloud.value = !useCloud.value
+  const targetList = filteredModels.value
+  if (targetList.length > 0) {
+    const installed = targetList.find(m => m.installed)
+    selectedModel.value = installed ? installed.key : targetList[0].key
+  }
+}
+
 onMounted(async () => {
   appLoading.value = true
   try {
@@ -441,6 +474,11 @@ async function loadVlModels() {
     activeModel.value = res.data.active_model
     selectedModel.value = res.data.active_model
     availableModels.value = res.data.available_models || []
+    // 根据当前选中模型的 is_cloud 字段判断环境，兼容自定义云端模型
+    const currentModel = availableModels.value.find(m => m.key === res.data.active_model)
+    if (currentModel) {
+      useCloud.value = !!currentModel.is_cloud
+    }
   }
 }
 

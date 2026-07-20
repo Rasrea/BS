@@ -156,17 +156,33 @@ CREATE TABLE IF NOT EXISTS pricing_items (
     template_id INTEGER NOT NULL DEFAULT 1,
     process_id INTEGER DEFAULT 0,
     work_type TEXT NOT NULL DEFAULT '',
-    surface_type TEXT NOT NULL DEFAULT '',           -- wall/floor/ceiling/all
+    surface_type TEXT NOT NULL DEFAULT '',
     material_name TEXT DEFAULT '',
     material_code TEXT DEFAULT '',
     item_name TEXT NOT NULL,
     unit TEXT DEFAULT '㎡',
     unit_price REAL DEFAULT 0.0,
-    unit_price_material REAL DEFAULT 0.0,            -- 材料费
-    unit_price_labor REAL DEFAULT 0.0,              -- 人工费
-    unit_price_aux REAL DEFAULT 0.0,                -- 辅料费
+    unit_price_material REAL DEFAULT 0.0,
+    unit_price_labor REAL DEFAULT 0.0,
+    unit_price_aux REAL DEFAULT 0.0,
     sort_order INTEGER DEFAULT 0,
     description TEXT DEFAULT '',
+    create_time TEXT NOT NULL,
+    update_time TEXT NOT NULL,
+    is_deleted INTEGER DEFAULT 0
+);
+
+-- 10. 自定义视觉模型表[支持前端自定义模型操作]
+CREATE TABLE IF NOT EXISTS custom_vl_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_key TEXT UNIQUE NOT NULL,
+    label TEXT NOT NULL,
+    model_type TEXT NOT NULL DEFAULT 'local',
+    api_base_url TEXT DEFAULT '',
+    api_token TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 100,
+    is_enabled INTEGER DEFAULT 1,
     create_time TEXT NOT NULL,
     update_time TEXT NOT NULL,
     is_deleted INTEGER DEFAULT 0
@@ -690,6 +706,47 @@ class Database:
         now = _now()
         await self.execute(
             "UPDATE pricing_items SET is_deleted=1, update_time=? WHERE id=?", (now, pid)
+        )
+
+    # ──────── 自定义视觉模型[增删改查] ────────
+
+    async def get_custom_vl_models(self):
+        rows = await self.fetchall(
+            "SELECT * FROM custom_vl_models WHERE is_deleted=0 ORDER BY sort_order ASC, id ASC"
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def add_custom_vl_model(self, model_key: str, label: str,
+                                   model_type: str = "local",
+                                   api_base_url: str = "",
+                                   api_token: str = "",
+                                   description: str = "",
+                                   sort_order: int = 100):
+        now = _now()
+        return await self.execute(
+            """INSERT INTO custom_vl_models 
+               (model_key, label, model_type, api_base_url, api_token, description, sort_order, create_time, update_time) 
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (model_key, label, model_type, api_base_url, api_token, description, sort_order, now, now)
+        )
+
+    async def update_custom_vl_model(self, mid: int, **kwargs):
+        allowed = {"model_key", "label", "model_type", "api_base_url", "api_token",
+                   "description", "sort_order", "is_enabled"}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return
+        updates["update_time"] = _now()
+        sets = ", ".join(f"{k}=?" for k in updates)
+        values = list(updates.values()) + [mid]
+        await self.execute(
+            f"UPDATE custom_vl_models SET {sets} WHERE id=?", tuple(values)
+        )
+
+    async def delete_custom_vl_model(self, mid: int):
+        now = _now()
+        await self.execute(
+            "UPDATE custom_vl_models SET is_deleted=1, update_time=? WHERE id=?", (now, mid)
         )
 
 
