@@ -31,9 +31,17 @@ def get_pipeline() -> VisionHarnessPipeline:
 
 
 def recognize_image(image_path: str,
-                    model: str = "qwen2.5:7b") -> dict:
+                    model: str = "qwen2.5:7b",
+                    model_type: str = None,
+                    api_base_url: str = None,
+                    api_token: str = None,
+                    api_format: str = None) -> dict:
     """
     兼容接口（与旧版 image_recognizer.recognize_image 签名一致）。
     内部委托给 VisionHarnessPipeline。
     """
-    return get_pipeline().recognize(image_path, model=model)
+    return get_pipeline().recognize(image_path, model=model,
+                                    model_type=model_type,
+                                    api_base_url=api_base_url,
+                                    api_token=api_token,
+                                    api_format=api_format)

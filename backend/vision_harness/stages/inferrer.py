@@ -147,11 +147,13 @@ class ModelInferrer:
         self._session = requests.Session()
         self._custom_model_config: dict | None = None
 
-    def set_custom_model_config(self, api_base_url: str = "", api_token: str = ""):
+    def set_custom_model_config(self, api_base_url: str = "", api_token: str = "",
+                                api_format: str = "openai"):
         """设置自定义模型的 API 配置（用于覆盖默认环境变量）"""
         self._custom_model_config = {
             "api_base_url": api_base_url,
             "api_token": api_token,
+            "api_format": api_format or "openai",
         }
 
     @property
@@ -161,62 +163,62 @@ class ModelInferrer:
             self._full_prompt = build_full_prompt()
         return self._full_prompt
 
-    def infer(self, prompt: str, image_base64: str,
-              model: str = DEFAULT_MODEL) -> str:
+    def infer(self, prompt: str, image_base64: str, model: str, model_type: str = None) -> str:
         """
-        调用模型推理（自动识别 Ollama 或 DashScope）。
-
-        约定：model 以 'dashscope:' 开头则调用云端，否则调用本地 Ollama。
+        调用模型推理（自动识别 Ollama / Cloud）。
 
         参数:
             prompt: 推理提示词
             image_base64: 图片 base64 编码
-            model: 模型名称（默认 qwen2.5:7b）
+            model: 模型名称 (例如: 'qwen-vl-plus' 或 'llava:7b')
+            model_type: 模型类型 ('cloud' 或 'local')，优先级高于 model 前缀判断
 
         返回:
             模型原始输出文本
         """
-        # ===== 情况 1: 支持多配置源的云端模型调用，现在不止支持内置列表中的云百炼，兼容任何云平台 =====
-        if model.startswith("dashscope:"):
-            actual_model = model.replace("dashscope:", "")
-            
+        # 决策逻辑：优先使用显式传入的 model_type，其次兼容旧版的前缀判断
+        is_cloud = False
+        if model_type == "cloud":
+            is_cloud = True
+        elif model_type == "local":
+            is_cloud = False
+        elif model.startswith("dashscope:"):
+            is_cloud = True
+            model = model.replace("dashscope:", "")
+
+        # ===== 情况 1: 云端模型调用 =====
+        if is_cloud:
             base_url = DASHSCOPE_BASE_URL
             api_token = DASHSCOPE_API_TOKEN
+            api_format = "openai"
+
             if self._custom_model_config:
-                if self._custom_model_config.get("api_base_url"):
-                    base_url = self._custom_model_config["api_base_url"]
-                if self._custom_model_config.get("api_token"):
-                    api_token = self._custom_model_config["api_token"]
+                base_url = self._custom_model_config.get("api_base_url", base_url)
+                api_token = self._custom_model_config.get("api_token", api_token)
+                api_format = self._custom_model_config.get("api_format", "openai")
 
             if not api_token:
-                raise ValueError("API Token 未配置，请在环境变量或自定义模型配置中设置。")
-            url = f"{base_url}{DASHSCOPE_API_CHAT}"
+                raise ValueError("云端模型 API Token 未配置，请在自定义模型配置中设置。")
+            if not base_url:
+                raise ValueError("云端模型 API Base URL 未配置。")
+
+            url = f"{base_url.rstrip('/')}/chat/completions"
             headers = {
                 "Authorization": f"Bearer {api_token}",
                 "Content-Type": "application/json"
             }
             image_url_data = f"data:image/jpeg;base64,{image_base64}"
 
-            payload = {
-                "model": actual_model,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": image_url_data}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }],
-                "temperature": OLLAMA_TEMPERATURE,
-                "stream": False
-            }
+            payload = self._build_cloud_payload(api_format, model, prompt, image_url_data)
 
-            logger.info(f"Calling Cloud API: {actual_model} @ {base_url}")
+            logger.info(f"Calling Cloud API [{api_format}]: {model} @ {base_url}")
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
             resp.raise_for_status()
 
             data = resp.json()
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        # ===== 情况 2: Ollama 本地 =====
+            return self._parse_cloud_response(api_format, data)
+
+        # ===== 情况 2: 本地 Ollama 模型调用 =====
         else:
             payload = {
                 "model": model,
@@ -231,12 +233,72 @@ class ModelInferrer:
                 },
             }
 
+            logger.info(f"Calling Local Ollama API: {model}")
             resp = requests.post(
                 self.chat_url, json=payload, timeout=self.timeout
             )
             resp.raise_for_status()
             data = resp.json()
             return data.get("message", {}).get("content", "")
+
+    @staticmethod
+    def _build_cloud_payload(api_format: str, model: str, prompt: str, image_url_data: str) -> dict:
+        """根据 api_format 构建不同格式的请求体"""
+
+        if api_format == "dashscope":
+            return {
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_url_data}},
+                        {"type": "text", "text": prompt},
+                    ]
+                }],
+                "temperature": 0.1,
+                "stream": False,
+            }
+
+        elif api_format == "qwen_vl_legacy":
+            return {
+                "model": model,
+                "input": {
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"image": image_url_data},
+                            {"text": prompt},
+                        ]
+                    }]
+                },
+                "parameters": {"temperature": 0.1},
+            }
+
+        else:
+            return {
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": image_url_data}},
+                        {"type": "text", "text": prompt},
+                    ]
+                }],
+                "temperature": 0.1,
+                "stream": False,
+            }
+
+    @staticmethod
+    def _parse_cloud_response(api_format: str, data: dict) -> str:
+        """根据 api_format 解析响应"""
+        if api_format == "qwen_vl_legacy":
+            output = data.get("output", {})
+            choices = output.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "")
+            return output.get("text", "")
+        else:
+            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     def health_check(self) -> bool:
         """检查 Ollama 服务是否正常"""

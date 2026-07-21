@@ -44,9 +44,17 @@ class CropRecognizer:
     4. 合并结果并返回标准格式
     """
 
-    def __init__(self):
+    def __init__(self, model_type: str = None, api_base_url: str = None,
+                 api_token: str = None, api_format: str = None):
         self.preprocessor = ImagePreprocessor()
         self.inferrer = ModelInferrer()
+        if api_base_url or api_token:
+            self.inferrer.set_custom_model_config(
+                api_base_url=api_base_url or "",
+                api_token=api_token or "",
+                api_format=api_format or "openai",
+            )
+        self._model_type = model_type
 
     def save_crop_images(
         self,
@@ -133,7 +141,7 @@ class CropRecognizer:
                     continue
 
             try:
-                raw_text = self.inferrer.infer(prompt, region_b64, model=model)
+                raw_text = self.inferrer.infer(prompt, region_b64, model=model, model_type=self._model_type)
                 parsed = extract_json(raw_text)
                 if parsed:
                     crop_results.update(parsed)

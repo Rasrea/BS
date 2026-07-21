@@ -49,13 +49,21 @@ class VisionHarnessPipeline:
         )
 
     def recognize(self, image_path: str,
-                  model: str = DEFAULT_MODEL) -> dict:
+                  model: str = DEFAULT_MODEL,
+                  model_type: str = None,
+                  api_base_url: str = None,
+                  api_token: str = None,
+                  api_format: str = None) -> dict:
         """
         全流水线执行。
 
         参数:
             image_path: 图片路径
             model: Ollama 模型名
+            model_type: 模型类型 ('cloud' 或 'local')
+            api_base_url: 自定义API地址
+            api_token: 自定义API Token
+            api_format: API格式 ('openai', 'dashscope', 'qwen_vl_legacy')
 
         返回:
             {
@@ -67,9 +75,15 @@ class VisionHarnessPipeline:
                 "timing": {...},      # 各阶段耗时
             }
         """
+        if api_base_url or api_token:
+            self.inferrer.set_custom_model_config(
+                api_base_url=api_base_url or "",
+                api_token=api_token or "",
+                api_format=api_format or "openai",
+            )
         # 捕获所有异常，确保不击穿
         try:
-            return self._run(image_path, model)
+            return self._run(image_path, model, model_type=model_type)
         except Exception as e:
             logger.exception("Harness 流水线异常")
             return {
@@ -85,14 +99,14 @@ class VisionHarnessPipeline:
                 "error": f"Harness异常: {str(e)}",
             }
 
-    def _run(self, image_path: str, model: str) -> dict:
+    def _run(self, image_path: str, model: str, model_type: str = None) -> dict:
         timing = {}
 
         # ====== Stage 1: 全图推理 ======
         t0 = time.time()
         img_b64 = self.preprocessor.full_image_base64(image_path)
         raw_text = self.inferrer.infer(
-            self.inferrer.full_prompt, img_b64, model=model
+            self.inferrer.full_prompt, img_b64, model=model, model_type=model_type
         )
         timing["full_inference"] = round(time.time() - t0, 2)
 
@@ -109,7 +123,7 @@ class VisionHarnessPipeline:
         # ====== Stage 2: 校验 + 重试 ======
         t1 = time.time()
         result, retry_log = self.retry_harness.execute(
-            image_path, result, model
+            image_path, result, model, model_type=model_type
         )
         timing["retry"] = round(time.time() - t1, 2)
 
