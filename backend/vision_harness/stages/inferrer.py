@@ -22,11 +22,6 @@ from vision_harness.config import (
     OLLAMA_TIMEOUT,
     OLLAMA_TEMPERATURE,
     DEFAULT_MODEL,
-    # 导入云百炼配置
-    DASHSCOPE_BASE_URL,
-    DASHSCOPE_API_CHAT,
-    DASHSCOPE_API_TOKEN,
-    DASHSCOPE_MODEL,  # 目前该值冗余
 )
 from vision_harness.material_library import (
     SPACE_TYPES, WALL_MATERIALS, FLOOR_MATERIALS, CEILING_MATERIALS,
@@ -170,37 +165,27 @@ class ModelInferrer:
         参数:
             prompt: 推理提示词
             image_base64: 图片 base64 编码
-            model: 模型名称 (例如: 'qwen-vl-plus' 或 'llava:7b')
-            model_type: 模型类型 ('cloud' 或 'local')，优先级高于 model 前缀判断
+            model: 模型名称
+            model_type: 模型类型 ('cloud' 或 'local')
 
         返回:
             模型原始输出文本
         """
-        # 决策逻辑：优先使用显式传入的 model_type，其次兼容旧版的前缀判断
-        is_cloud = False
-        if model_type == "cloud":
-            is_cloud = True
-        elif model_type == "local":
-            is_cloud = False
-        elif model.startswith("dashscope:"):
-            is_cloud = True
-            model = model.replace("dashscope:", "")
+        is_cloud = model_type == "cloud"
 
         # ===== 情况 1: 云端模型调用 =====
         if is_cloud:
-            base_url = DASHSCOPE_BASE_URL
-            api_token = DASHSCOPE_API_TOKEN
-            api_format = "openai"
+            if not self._custom_model_config:
+                raise ValueError("云端模型未配置，请在模型管理中添加云端模型并配置 API 信息。")
 
-            if self._custom_model_config:
-                base_url = self._custom_model_config.get("api_base_url", base_url)
-                api_token = self._custom_model_config.get("api_token", api_token)
-                api_format = self._custom_model_config.get("api_format", "openai")
+            base_url = self._custom_model_config.get("api_base_url", "")
+            api_token = self._custom_model_config.get("api_token", "")
+            api_format = self._custom_model_config.get("api_format", "openai")
 
             if not api_token:
-                raise ValueError("云端模型 API Token 未配置，请在自定义模型配置中设置。")
+                raise ValueError("云端模型 API Token 未配置，请在模型管理中设置。")
             if not base_url:
-                raise ValueError("云端模型 API Base URL 未配置。")
+                raise ValueError("云端模型 API Base URL 未配置，请在模型管理中设置。")
 
             url = f"{base_url.rstrip('/')}/chat/completions"
             headers = {

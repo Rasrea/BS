@@ -77,21 +77,14 @@
         </h4>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div v-if="!editingModel.id">
-            <label class="text-[10px] text-gray-500 block mb-0.5">模型标识 *</label>
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型ID *</label>
             <input v-model="editingModel.model_key" placeholder="如: dashscope:my-model 或 my-local-model"
                    class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
           </div>
           <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">显示名称 *</label>
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型名称 *</label>
             <input v-model="editingModel.label" placeholder="显示名称"
                    class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">模型类型</label>
-            <select v-model="editingModel.model_type" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-white">
-              <option value="local">本地 (Ollama)</option>
-              <option value="cloud">云端 (API)</option>
-            </select>
           </div>
           <div v-if="editingModel.model_type === 'cloud'">
             <label class="text-[10px] text-gray-500 block mb-0.5">API Base URL</label>
@@ -110,11 +103,6 @@
               <option value="dashscope">DashScope</option>
               <option value="qwen_vl_legacy">Qwen VL (旧版)</option>
             </select>
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">排序权重</label>
-            <input v-model.number="editingModel.sort_order" type="number" placeholder="100"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
           </div>
           <div class="md:col-span-2">
             <label class="text-[10px] text-gray-500 block mb-0.5">描述</label>
@@ -501,19 +489,18 @@ function startAddModel() {
     id: null,
     model_key: '',
     label: '',
-    model_type: 'local',
+    model_type: 'cloud',
     api_base_url: '',
     api_token: '',
     api_format: 'openai',
     description: '',
-    sort_order: 100,
   }
   editModelMsg.value = ''
 }
 
 async function addCustomModel() {
   if (!editingModel.value.model_key || !editingModel.value.label) {
-    editModelMsg.value = '模型标识和显示名称不能为空'
+    editModelMsg.value = '模型ID和模型名称不能为空'
     editModelMsgType.value = 'error'
     return
   }
@@ -527,7 +514,6 @@ async function addCustomModel() {
   fd.append('api_token', editingModel.value.api_token)
   fd.append('api_format', editingModel.value.api_format || 'openai')
   fd.append('description', editingModel.value.description)
-  fd.append('sort_order', editingModel.value.sort_order)
   const res = await API.post('/settings/vl_model/custom', fd)
   if (res.success) {
     editModelMsg.value = `模型 ${editingModel.value.label} 添加成功`
@@ -617,8 +603,6 @@ async function saveEditModel() {
   editModelMsg.value = ''
   const fd = new FormData()
   fd.append('label', editingModel.value.label)
-  fd.append('model_type', editingModel.value.model_type)
-  fd.append('sort_order', editingModel.value.sort_order)
   fd.append('description', editingModel.value.description)
   if (editingModel.value.model_type === 'cloud') {
     fd.append('api_base_url', editingModel.value.api_base_url || '')

@@ -80,17 +80,6 @@ OLLAMA_API_CHAT = "/api/chat"
 OLLAMA_TIMEOUT = 120       # 单次推理超时（秒）
 OLLAMA_TEMPERATURE = 0.1   # 推理温度（低=更确定）
 
-# ===== 云百炼 (DashScope) 配置 =====
-# 使用 OpenAI 兼容模式
-DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DASHSCOPE_API_CHAT = "/chat/completions"
-DASHSCOPE_MODEL = "qwen-vl-plus" # 默认云端模型
-# 云百炼Token从环境变量读取
-DASHSCOPE_API_TOKEN = os.getenv("DASHSCOPE_API_KEY", "")
-DASHSCOPE_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3-vl-plus")
-
-
-
 # ═══════════════════════════════════════════════
 # 校验 & 重试
 # ═══════════════════════════════════════════════

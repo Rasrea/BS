@@ -38,7 +38,6 @@ from image_preprocessor import preprocess_image, preprocess_image_stats
 from db import db
 from excel_export import export_quote_excel
 import space_synonyms
-from vision_harness.config import DASHSCOPE_API_TOKEN#新增，导入云百炼key
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
@@ -1425,13 +1424,6 @@ VL_MODEL_OPTIONS = {
     "qwen3-vl-8b-thinking": "通义千问3 VL 8b（思考）",
     "qwen3-vl-8b-instruct": "通义千问3 VL 8b",
     "qwen2.5-vl-3b-instruct": "通义千问2.5 VL 3b AWQ",
-    "dashscope:qwen3-vl-plus": "千问3 VL Plus",
-    "dashscope:qwen3-vl-flash": "千问3.6 VL Flash（快速）",
-    "dashscope:qwen3.5-ocr": "千问3.5 OCR（文字提取）",
-    "dashscope:qwen3-vl-32b-instruct": "千问3 32b",
-    "dashscope:qwen3-vl-32b-thinking": "千问3 32b思考",
-    "dashscope:qwen3.7-plus": "千问3.7 plus",
-    "dashscope:qwen3.7-max": "千问3.7 max"
 }
 
 SUPPORTED_VL_MODELS = set(VL_MODEL_OPTIONS.keys())
@@ -1442,8 +1434,6 @@ async def get_vl_model():
     """查询当前视觉模型配置 + 可用模型列表"""
     settings = await db.get_settings()
     active = settings.get("active_vl_model", "llava:7b")
-    # 直接从环境变量读云key
-    dashscope_key = DASHSCOPE_API_TOKEN
     # 检查 Ollama 在线状态
     try:
         import requests
@@ -1457,26 +1447,14 @@ async def get_vl_model():
 
     available = []
     for key, label in VL_MODEL_OPTIONS.items():
-        # 区分云端和本地模型
-        if key.startswith("dashscope:"):
-            # 云端模型：只要配置了API Key就算可用
-            available.append({
-                "key": key,
-                "label": label,
-                "installed": bool(dashscope_key),  # 有API Key就可用
-                "active": key == active,
-                "is_cloud": True,  # 标记云端，方便前端区分
-                "is_custom": False,#告诉前端这不是数据库里的自定义模型
-            })
-        else:
-            available.append({
-                "key": key,
-                "label": label,
-                "installed": key in local_models,
-                "active": key == active,
-                "is_cloud": False,
-                "is_custom": False,
-            })
+        available.append({
+            "key": key,
+            "label": label,
+            "installed": key in local_models,
+            "active": key == active,
+            "is_cloud": False,
+            "is_custom": False,
+        })
 
     # 也列出其他本地可用的可能视觉模型
     for m in sorted(local_models):
@@ -1496,19 +1474,13 @@ async def get_vl_model():
         if not cm.get("is_enabled", 1):
             continue
         model_key = cm["model_key"]
-        is_cloud = cm.get("model_type", "local") == "cloud"
-        if is_cloud:
-            #云端只要有key就算可用。key可以是数据库里单独配的 (cm.get("api_token"))，也可以是系统默认的 (dashscope_key)。
-            installed = bool(cm.get("api_token") or dashscope_key)
-        else:
-            #本地模型问 Ollama ，local_models 列表里有这个模型吗
-            installed = model_key in local_models
+        installed = bool(cm.get("api_token"))
         available.append({
             "key": model_key,
             "label": cm.get("label", model_key),
             "installed": installed,
             "active": model_key == active,
-            "is_cloud": is_cloud,
+            "is_cloud": True,
             "is_custom": True,
             "custom_id": cm["id"],
             "description": cm.get("description", ""),
@@ -1531,24 +1503,11 @@ async def set_vl_model(model: str = Form(...)):
     # 第二步：确定模型类型和验证方式
     model_info = next((cm for cm in custom_models if cm["model_key"] == model), None)
     is_cloud = False
-    token = None
 
     if model_info:
-        # 数据库中存在该模型，根据model_type判断
         is_cloud = model_info.get("model_type") == "cloud"
-        if is_cloud:
-            token = model_info.get("api_token")
-    elif model.startswith("dashscope:"):
-        # 内置阿里云模型默认算云端
-        is_cloud = True
-        token = DASHSCOPE_API_TOKEN
-
-    # 第三步：根据模型类型进行验证
-    if is_cloud:
-        # 云端模型：统一进行Token校验
-        if not token:
+        if is_cloud and not model_info.get("api_token"):
             return err(400, "切换云端模型前请先配置API Token")
-        # 云端模型验证通过，无需检查本地Ollama
     else:
         # 本地模型：检查Ollama中是否存在
         try:
@@ -1591,37 +1550,26 @@ async def list_custom_vl_models():
 async def create_custom_vl_model(
     model_key: str = Form(...),
     label: str = Form(...),
-    model_type: str = Form("local"),
     api_base_url: str = Form(""),
     api_token: str = Form(""),
     api_format: str = Form("openai"),
     description: str = Form(""),
-    sort_order: int = Form(100),
 ):
     """新增自定义视觉模型"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法修改模型配置")
     if not model_key or not label:
         return err(400, "模型标识和显示名称不能为空")
-    if model_type not in ("local", "cloud"):
-        return err(400, "模型类型必须为 local 或 cloud")
     if api_format not in ("openai", "dashscope", "qwen_vl_legacy"):
         return err(400, "API格式必须为 openai、dashscope 或 qwen_vl_legacy")
-    if model_type == "cloud" and not api_base_url:
+    if not api_base_url:
         api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    all_keys = set(VL_MODEL_OPTIONS.keys())
-    custom_models = await db.get_custom_vl_models()
-    for cm in custom_models:
-        all_keys.add(cm["model_key"])
-    if model_key in all_keys:
-        return err(400, f"模型标识 '{model_key}' 已存在，请使用其他名称")
-
     mid = await db.add_custom_vl_model(
-        model_key=model_key, label=label, model_type=model_type,
+        model_key=model_key, label=label, model_type="cloud",
         api_base_url=api_base_url, api_token=api_token,
         api_format=api_format,
-        description=description, sort_order=sort_order,
+        description=description,
     )
     await db.add_log("config", operation_action=f"custom_model_add:{model_key}({label})")
     return ok({"id": mid, "model_key": model_key}, message=f"模型 {label} 添加成功")
@@ -1633,12 +1581,10 @@ async def create_custom_vl_model(
 async def update_custom_vl_model(
     mid: int,
     label: str = Form(None),
-    model_type: str = Form(None),
     api_base_url: str = Form(None),
     api_token: str = Form(None),
     api_format: str = Form(None),
     description: str = Form(None),
-    sort_order: int = Form(None),
     is_enabled: int = Form(None),
 ):
     """修改自定义视觉模型"""
@@ -1647,10 +1593,6 @@ async def update_custom_vl_model(
     updates = {}
     if label is not None:
         updates["label"] = label
-    if model_type is not None:
-        if model_type not in ("local", "cloud"):
-            return err(400, "模型类型必须为 local 或 cloud")
-        updates["model_type"] = model_type
     if api_base_url is not None:
         updates["api_base_url"] = api_base_url
     if api_token is not None:
@@ -1661,8 +1603,6 @@ async def update_custom_vl_model(
         updates["api_format"] = api_format
     if description is not None:
         updates["description"] = description
-    if sort_order is not None:
-        updates["sort_order"] = sort_order
     if is_enabled is not None:
         updates["is_enabled"] = is_enabled
     if not updates:
