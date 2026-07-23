@@ -11,68 +11,23 @@
           </svg>
         </div>
       </div>
-    
+
       <div v-if="showModelManager" class="mt-3">
-        <div class="flex justify-end mb-2">
+        <div class="flex justify-end mb-2 gap-2">
           <button
-            @click.stop="showAddModel = !showAddModel"
+            @click.stop="showRecycleBin = !showRecycleBin; loadRecycleBin()"
+            class="text-xs px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 font-medium relative"
+          >
+            🗑️ 回收站
+            <span v-if="recycleModels.length > 0" class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center">{{ recycleModels.length }}</span>
+          </button>
+          <button
+            @click.stop="startAddModel"
             class="text-xs px-3 py-1.5 bg-primary-50 text-primary-600 rounded-lg hover:bg-primary-100 font-medium"
           >
-            {{ showAddModel ? '收起' : '+ 添加模型' }}
+            + 添加模型
           </button>
         </div>
-    
-        <!-- 添加模型表单 -->
-      <div v-if="showAddModel" class="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <h4 class="text-xs font-semibold text-gray-600 mb-2">添加自定义模型</h4>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">模型标识 *</label>
-            <input v-model="newModel.model_key" placeholder="如: dashscope:my-model 或 my-local-model"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">显示名称 *</label>
-            <input v-model="newModel.label" placeholder="如: 我的自定义模型"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">模型类型</label>
-            <select v-model="newModel.model_type" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-white">
-              <option value="local">本地 (Ollama)</option>
-              <option value="cloud">云端 (API)</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-500 block mb-0.5">排序权重</label>
-            <input v-model.number="newModel.sort_order" type="number" placeholder="100"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div v-if="newModel.model_type === 'cloud'">
-            <label class="text-[10px] text-gray-500 block mb-0.5">API Base URL</label>
-            <input v-model="newModel.api_base_url" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div v-if="newModel.model_type === 'cloud'">
-            <label class="text-[10px] text-gray-500 block mb-0.5">API Token（可选，留空用系统默认）</label>
-            <input v-model="newModel.api_token" type="password" placeholder="sk-xxxxx"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-          <div class="md:col-span-2">
-            <label class="text-[10px] text-gray-500 block mb-0.5">描述</label>
-            <input v-model="newModel.description" placeholder="可选描述信息"
-                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
-          </div>
-        </div>
-        <div class="flex items-center gap-2 mt-3">
-          <button @click="addCustomModel" :disabled="addingModel"
-                  class="text-xs px-4 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50">
-            {{ addingModel ? '添加中...' : '确认添加' }}
-          </button>
-          <button @click="showAddModel = false" class="text-xs px-3 py-1.5 text-gray-500 hover:text-gray-700">取消</button>
-          <span v-if="addModelMsg" class="text-[10px]" :class="addModelMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ addModelMsg }}</span>
-        </div>
-      </div>
 
         <!-- 自定义模型列表 -->
       <div v-if="customModels.length > 0">
@@ -88,6 +43,11 @@
               <span class="text-xs font-medium text-gray-700 truncate">{{ cm.label }}</span>
               <span class="text-[10px] text-gray-400 truncate">{{ cm.model_key }}</span>
             </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              <button @click.stop="startEditModel(cm)"
+                      class="text-[10px] px-2 py-0.5 bg-primary-50 text-primary-600 rounded hover:bg-primary-100">
+                编辑
+              </button>
               <button @click.stop="toggleModelEnabled(cm)"
                       :disabled="togglingId === cm.id"
                       class="text-[10px] px-2 py-0.5 rounded disabled:opacity-50"
@@ -100,10 +60,105 @@
                 删除
               </button>
             </div>
+            </div>
           </div>
         </div>
-        <div v-else-if="!showAddModel" class="text-[10px] text-gray-400 text-center py-2">
+        <div v-else class="text-[10px] text-gray-400 text-center py-2">
           暂无自定义模型，点击「+ 添加模型」开始添加
+        </div>
+      </div>
+    </div>
+
+    <!-- 新增/编辑模型弹窗 -->
+    <div v-if="editingModel" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">
+          {{ editingModel.id ? '编辑模型：' + editingModel.label : '添加自定义模型' }}
+        </h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div v-if="!editingModel.id">
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型ID *</label>
+            <input v-model="editingModel.model_key" placeholder="如: dashscope:my-model 或 my-local-model"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div>
+            <label class="text-[10px] text-gray-500 block mb-0.5">模型名称 *</label>
+            <input v-model="editingModel.label" placeholder="显示名称"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div v-if="editingModel.model_type === 'cloud'">
+            <label class="text-[10px] text-gray-500 block mb-0.5">API Base URL</label>
+            <input v-model="editingModel.api_base_url" placeholder="https://api.example.com/v1"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div v-if="editingModel.model_type === 'cloud'">
+            <label class="text-[10px] text-gray-500 block mb-0.5">API Token</label>
+            <input v-model="editingModel.api_token" type="password" placeholder="sk-xxxxx"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+          <div v-if="editingModel.model_type === 'cloud'">
+            <label class="text-[10px] text-gray-500 block mb-0.5">API 格式</label>
+            <select v-model="editingModel.api_format" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-white">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="dashscope">DashScope</option>
+              <option value="qwen_vl_legacy">Qwen VL (旧版)</option>
+            </select>
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-[10px] text-gray-500 block mb-0.5">描述</label>
+            <input v-model="editingModel.description" placeholder="可选描述信息"
+                   class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs" />
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 mt-4">
+          <button @click="editingModel = null" class="text-xs px-3 py-1.5 text-gray-500 hover:text-gray-700">取消</button>
+          <button @click="editingModel.id ? saveEditModel() : addCustomModel()" :disabled="savingModel"
+                  class="text-xs px-4 py-1.5 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium disabled:opacity-50">
+            {{ savingModel ? '保存中...' : (editingModel.id ? '保存' : '添加') }}
+          </button>
+        </div>
+        <span v-if="editModelMsg" class="text-[10px] mt-1 block" :class="editModelMsgType === 'error' ? 'text-red-500' : 'text-green-600'">{{ editModelMsg }}</span>
+      </div>
+    </div>
+
+    <!-- 回收站弹窗 -->
+    <div v-if="showRecycleBin" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-5 max-h-[70vh] flex flex-col">
+        <div class="flex items-center justify-between mb-3">
+          <h4 class="text-sm font-semibold text-gray-700">🗑️ 回收站</h4>
+          <button @click="showRecycleBin = false" class="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <div v-if="recycleModels.length === 0" class="text-center py-8 text-gray-400">
+          <p class="text-2xl mb-2">🗑️</p>
+          <p class="text-xs">回收站为空</p>
+        </div>
+        <div v-else class="flex-1 overflow-y-auto space-y-2">
+          <div v-for="rm in recycleModels" :key="rm.id"
+               class="flex items-center justify-between p-2.5 bg-gray-50 border border-gray-100 rounded-lg">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0"
+                      :class="rm.model_type === 'cloud' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'">
+                  {{ rm.model_type === 'cloud' ? '☁️' : '💻' }}
+                </span>
+                <span class="text-xs font-medium text-gray-600 truncate">{{ rm.label }}</span>
+              </div>
+              <p class="text-[10px] text-gray-400 mt-0.5">删除于 {{ rm.update_time }}</p>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0 ml-2">
+              <button @click="restoreModel(rm)" :disabled="recycleActionId === rm.id"
+                      class="text-[10px] px-2 py-0.5 bg-green-50 text-green-600 rounded hover:bg-green-100 disabled:opacity-50">
+                恢复
+              </button>
+              <button @click="permanentDelete(rm)" :disabled="recycleActionId === rm.id"
+                      class="text-[10px] px-2 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100 disabled:opacity-50">
+                彻底删除
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 pt-3 border-t border-gray-100">
+          <p class="text-[10px] text-gray-400 text-center">软删除的模型保留 30 天，届时将自动清理</p>
         </div>
       </div>
     </div>
@@ -575,21 +630,16 @@ const testingCad = ref(false) // CAD 测试中状态
 
 // ========== 新增：模型管理 ==========
 const showModelManager = ref(false)
-const showAddModel = ref(false)
 const togglingId = ref(null)
-const addingModel = ref(false)
-const addModelMsg = ref('')
-const addModelMsgType = ref('success')
+const savingModel = ref(false)
+const editModelMsg = ref('')
+const editModelMsgType = ref('success')
 const customModels = ref([])
-const newModel = ref({
-  model_key: '',
-  label: '',
-  model_type: 'local',
-  api_base_url: '',
-  api_token: '',
-  description: '',
-  sort_order: 100,
-})
+const editingModel = ref(null)
+
+const showRecycleBin = ref(false)
+const recycleModels = ref([])
+const recycleActionId = ref(null)
 
 async function loadCustomModels() {
   const res = await API.get('/settings/vl_model/custom')
@@ -598,35 +648,49 @@ async function loadCustomModels() {
   }
 }
 
+function startAddModel() {
+  editingModel.value = {
+    id: null,
+    model_key: '',
+    label: '',
+    model_type: 'cloud',
+    api_base_url: '',
+    api_token: '',
+    api_format: 'openai',
+    description: '',
+  }
+  editModelMsg.value = ''
+}
+
 async function addCustomModel() {
-  if (!newModel.value.model_key || !newModel.value.label) {
-    addModelMsg.value = '模型标识和显示名称不能为空'
-    addModelMsgType.value = 'error'
+  if (!editingModel.value.model_key || !editingModel.value.label) {
+    editModelMsg.value = '模型ID和模型名称不能为空'
+    editModelMsgType.value = 'error'
     return
   }
-  addingModel.value = true
-  addModelMsg.value = ''
+  savingModel.value = true
+  editModelMsg.value = ''
   const fd = new FormData()
-  fd.append('model_key', newModel.value.model_key)
-  fd.append('label', newModel.value.label)
-  fd.append('model_type', newModel.value.model_type)
-  fd.append('api_base_url', newModel.value.api_base_url)
-  fd.append('api_token', newModel.value.api_token)
-  fd.append('description', newModel.value.description)
-  fd.append('sort_order', newModel.value.sort_order)
+  fd.append('model_key', editingModel.value.model_key)
+  fd.append('label', editingModel.value.label)
+  fd.append('model_type', editingModel.value.model_type)
+  fd.append('api_base_url', editingModel.value.api_base_url)
+  fd.append('api_token', editingModel.value.api_token)
+  fd.append('api_format', editingModel.value.api_format || 'openai')
+  fd.append('description', editingModel.value.description)
   const res = await API.post('/settings/vl_model/custom', fd)
   if (res.success) {
-    addModelMsg.value = `模型 ${newModel.value.label} 添加成功`
-    addModelMsgType.value = 'success'
-    newModel.value = { model_key: '', label: '', model_type: 'local', api_base_url: '', api_token: '', description: '', sort_order: 100 }
+    editModelMsg.value = `模型 ${editingModel.value.label} 添加成功`
+    editModelMsgType.value = 'success'
     await loadCustomModels()
     await reloadModels()
+    setTimeout(() => { editingModel.value = null }, 500)
   } else {
-    addModelMsg.value = res.message || '添加失败'
-    addModelMsgType.value = 'error'
+    editModelMsg.value = res.message || '添加失败'
+    editModelMsgType.value = 'error'
   }
-  addingModel.value = false
-  setTimeout(() => addModelMsg.value = '', 3000)
+  savingModel.value = false
+  setTimeout(() => editModelMsg.value = '', 3000)
 }
 
 async function toggleModelEnabled(cm) {
@@ -646,7 +710,7 @@ async function toggleModelEnabled(cm) {
 }
 
 async function deleteCustomModel(cm) {
-  if (!confirm(`确定要删除模型「${cm.label}」吗？`)) return
+  if (!confirm(`确定将模型「${cm.label}」移入回收站？您可以在 30 天内恢复。`)) return
   const res = await API.delete(`/settings/vl_model/custom/${cm.id}`)
   if (res.success) {
     await loadCustomModels()
@@ -654,6 +718,74 @@ async function deleteCustomModel(cm) {
   } else {
     alert(res.message || '删除失败')
   }
+}
+
+async function loadRecycleBin() {
+  const res = await API.get('/settings/vl_model/custom/recycle')
+  if (res.success && res.data) {
+    recycleModels.value = res.data.models || []
+  }
+}
+
+async function restoreModel(rm) {
+  recycleActionId.value = rm.id
+  const res = await API.post(`/settings/vl_model/custom/recycle/${rm.id}/restore`)
+  if (res.success) {
+    await loadRecycleBin()
+    await loadCustomModels()
+    await reloadModels()
+  } else {
+    alert(res.message || '恢复失败')
+  }
+  recycleActionId.value = null
+}
+
+async function permanentDelete(rm) {
+  if (!confirm(`此操作不可撤销，模型「${rm.label}」将被永久删除。确定要继续吗？`)) return
+  recycleActionId.value = rm.id
+  const res = await API.delete(`/settings/vl_model/custom/recycle/${rm.id}`)
+  if (res.success) {
+    await loadRecycleBin()
+  } else {
+    alert(res.message || '删除失败')
+  }
+  recycleActionId.value = null
+}
+
+function startEditModel(cm) {
+  editingModel.value = { ...cm }
+  editModelMsg.value = ''
+}
+
+async function saveEditModel() {
+  if (!editingModel.value.label) {
+    editModelMsg.value = '显示名称不能为空'
+    editModelMsgType.value = 'error'
+    return
+  }
+  savingModel.value = true
+  editModelMsg.value = ''
+  const fd = new FormData()
+  fd.append('label', editingModel.value.label)
+  fd.append('description', editingModel.value.description)
+  if (editingModel.value.model_type === 'cloud') {
+    fd.append('api_base_url', editingModel.value.api_base_url || '')
+    fd.append('api_token', editingModel.value.api_token || '')
+    fd.append('api_format', editingModel.value.api_format || 'openai')
+  }
+  const res = await API.put(`/settings/vl_model/custom/${editingModel.value.id}`, fd)
+  if (res.success) {
+    editModelMsg.value = '保存成功'
+    editModelMsgType.value = 'success'
+    await loadCustomModels()
+    await reloadModels()
+    setTimeout(() => { editingModel.value = null }, 500)
+  } else {
+    editModelMsg.value = res.message || '保存失败'
+    editModelMsgType.value = 'error'
+  }
+  savingModel.value = false
+  setTimeout(() => editModelMsg.value = '', 3000)
 }
 
 async function reloadModels() {
@@ -729,22 +861,22 @@ const stats = computed(() => {
       return isNaN(num) ? null : num
     })
     .filter(s => s !== null)
-  
+
   let avgSimStr = '0.00'
   if (similarities.length > 0) {
     const sortedSims = similarities.sort((a, b) => a - b)
     let trimmedSims = sortedSims
-    
+
     if (sortedSims.length > 2) {
       trimmedSims = sortedSims.slice(1, -1)
     }
-    
+
     if (trimmedSims.length > 0) {
       const avgSim = trimmedSims.reduce((sum, s) => sum + s, 0) / trimmedSims.length
       avgSimStr = avgSim.toFixed(2)
     }
   }
-  
+
   return {
     totalTime: totalSec.toFixed(2),
     avgTime: avgSec.toFixed(2),

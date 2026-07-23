@@ -18,6 +18,8 @@ from datetime import datetime
 from typing import Optional
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
 
+import data
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +27,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
-
+import logging
 from cad_parser import parse_cad_file
 from image_recognizer import recognize_with_fallback
 from quantity_estimator import estimate_quantities
@@ -36,8 +38,12 @@ from image_preprocessor import preprocess_image, preprocess_image_stats
 from db import db
 from excel_export import export_quote_excel
 import space_synonyms
-from vision_harness.config import DASHSCOPE_API_TOKEN#新增，导入云百炼key
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 
+logger = logging.getLogger(__name__)
 
 # ─────────────────── App ───────────────────
 
@@ -468,7 +474,18 @@ async def analyze_image(
     settings = await db.get_settings()
     vl_model = settings.get("active_vl_model", "llava:7b")
 
-    data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback, processed_path, vl_model)
+    # 从数据库查询自定义模型的完整配置
+    custom_models = await db.get_custom_vl_models()
+    model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
+    model_type = model_info.get("model_type") if model_info else None
+    api_base_url = model_info.get("api_base_url") if model_info else None
+    api_token = model_info.get("api_token") if model_info else None
+
+    data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback,
+                                      processed_path, vl_model,
+                                      model_type=model_type,
+                                      api_base_url=api_base_url,
+                                      api_token=api_token)
 
     if error:
         return err(504, f"AI识别失败: {error}", task_status=STATE_IDLE, trace_id=tid)
@@ -538,24 +555,30 @@ async def analyze_image(
 
 
 # ─────────────────── 接口：视觉识别独立测试（诊断用） ───────────────────
-
+@app.post("/api/vision_test")
 @app.post("/api/vision_test")
 async def vision_test(
     image_file: UploadFile = File(None),
     model: str = Form(""),
-    crop_enabled: str = Form("true"),  
+    crop_enabled: str = Form("true"),
+    data: str = Form(default="{}")  # ✅ 前端 JSON 字符串
 ):
-    """
-    独立视觉模型测试接口（诊断用）
-    - 无状态机锁，无数据库写，无30s超时
-    - 可指定模型：留空用系统默认，或传具体模型名
-    - 返回各步骤耗时 + 原始模型响应
-    - crop_enabled: "true" 启用分区域裁剪识别（ceiling/wall/floor），提高识别精度；"false" 禁用
-    """
-    
+    logger.info("🚀 /api/vision_test called")
+    logger.info("📷 filename=%s", image_file.filename)
+    logger.info("🧠 raw data param=%s", data)  # ✅ 打字符串，不打 .get()
+
+    # ✅ 解析前端传来的 structured 标志（安全）
+    structured_flag = False
+    try:
+        parsed_data = json.loads(data)
+        structured_flag = parsed_data.get("structured", False)
+        logger.info("🧠 parsed structured flag=%s", structured_flag)
+    except Exception as e:
+        logger.warning("⚠️ data JSON 解析失败: %s", e)
+
     if not image_file:
         return err(400, "请上传图片（jpg/png/webp）")
-        
+
     content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "图片")
     task_id = uuid.uuid4().hex[:8]
     save_path = UPLOAD_DIR / f"{task_id}_test{ext}"
@@ -574,43 +597,61 @@ async def vision_test(
     # 步骤2：模型推理
     t0 = time.time()
     from image_recognizer import recognize_with_fallback
-    
+
     if model:
         vl_model = model
     else:
         settings = await db.get_settings()
         vl_model = settings.get("active_vl_model", "qwen2.5:7b")
 
-    # 根据 crop_mode 选择识别策略
+    # 从数据库查询自定义模型的完整配置
+    custom_models = await db.get_custom_vl_models()
+    model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
+    vl_model_type = model_info.get("model_type") if model_info else None
+    vl_api_base_url = model_info.get("api_base_url") if model_info else None
+    vl_api_token = model_info.get("api_token") if model_info else None
+    vl_api_format = model_info.get("api_format") if model_info else None
+
     use_crop = crop_enabled.lower() in ("true", "1", "yes")
-    
+
+        # ✅ 关键：不要用 data 这个名字存识别结果
     if use_crop:
         from crop_recognizer import CropRecognizer
-                
-        recognizer = CropRecognizer()
-        data = recognizer.recognize_with_crop(
+        recognizer = CropRecognizer(
+            model_type=vl_model_type,
+            api_base_url=vl_api_base_url,
+            api_token=vl_api_token,
+            api_format=vl_api_format,
+        )
+        recognition_result = recognizer.recognize_with_crop(
             image_path=processed_path,
             model=vl_model,
             upload_dir=UPLOAD_DIR,
             task_id=task_id,
         )
     else:
-        # 传统全图识别
-        data = recognize_with_fallback(processed_path, vl_model)
-        data["_crop_mode"] = "disabled"
-    
-    timings["inference"] = round(time.time() - t0, 3)
+        recognition_result = recognize_with_fallback(
+            processed_path, vl_model,
+            model_type=vl_model_type,
+            api_base_url=vl_api_base_url,
+            api_token=vl_api_token,
+            api_format=vl_api_format,
+        )
+        recognition_result["_crop_mode"] = "disabled"
 
+    timings["inference"] = round(time.time() - t0, 3)
     t_total = round(time.time() - t_total, 3)
 
     from vision_harness.similarity import get_expect_pretect, evaluate_similarity
-    
-    # 获取测试标签和预测值
-    expected, predicted = get_expect_pretect(image_file.filename, data["structured"])
-    
-    # 计算图片相似度
+
+    # ✅ 从识别结果中取 structured
+    expected, predicted = get_expect_pretect(
+        image_file.filename,
+        recognition_result.get("structured", {})
+    )
+
     similarity_json = evaluate_similarity(expected, predicted)
-    
+
     # 清理临时文件
     try:
         os.remove(save_path)
@@ -618,7 +659,6 @@ async def vision_test(
     except Exception:
         pass
 
-    # 获取可用模型列表
     try:
         from db import db as _db
         settings_data = await _db.get_settings()
@@ -639,11 +679,11 @@ async def vision_test(
             "original_size_kb": round(stats["original_size_kb"], 1),
             "processed_size_kb": round(stats["processed_size_kb"], 1),
         },
-        "raw_result": data,
+        "raw_result": recognition_result,
         "similarity": similarity_json,
     }
-
-    return ok(result)    
+    logger.info("📤 vision_test response: expected=%s, predicted=%s", expected, predicted)
+    return ok(result)
    
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
@@ -1498,13 +1538,6 @@ VL_MODEL_OPTIONS = {
     "qwen3-vl-8b-thinking": "通义千问3 VL 8b（思考）",
     "qwen3-vl-8b-instruct": "通义千问3 VL 8b",
     "qwen2.5-vl-3b-instruct": "通义千问2.5 VL 3b AWQ",
-    "dashscope:qwen3-vl-plus": "千问3 VL Plus",
-    "dashscope:qwen3-vl-flash": "千问3.6 VL Flash（快速）",
-    "dashscope:qwen3.5-ocr": "千问3.5 OCR（文字提取）",
-    "dashscope:qwen3-vl-32b-instruct": "千问3 32b",
-    "dashscope:qwen3-vl-32b-thinking": "千问3 32b思考",
-    "dashscope:qwen3.7-plus": "千问3.7 plus",
-    "dashscope:qwen3.7-max": "千问3.7 max"
 }
 
 SUPPORTED_VL_MODELS = set(VL_MODEL_OPTIONS.keys())
@@ -1515,8 +1548,6 @@ async def get_vl_model():
     """查询当前视觉模型配置 + 可用模型列表"""
     settings = await db.get_settings()
     active = settings.get("active_vl_model", "llava:7b")
-    # 直接从环境变量读云key
-    dashscope_key = DASHSCOPE_API_TOKEN
     # 检查 Ollama 在线状态
     try:
         import requests
@@ -1530,26 +1561,14 @@ async def get_vl_model():
 
     available = []
     for key, label in VL_MODEL_OPTIONS.items():
-        # 区分云端和本地模型
-        if key.startswith("dashscope:"):
-            # 云端模型：只要配置了API Key就算可用
-            available.append({
-                "key": key,
-                "label": label,
-                "installed": bool(dashscope_key),  # 有API Key就可用
-                "active": key == active,
-                "is_cloud": True,  # 标记云端，方便前端区分
-                "is_custom": False,#告诉前端这不是数据库里的自定义模型
-            })
-        else:
-            available.append({
-                "key": key,
-                "label": label,
-                "installed": key in local_models,
-                "active": key == active,
-                "is_cloud": False,
-                "is_custom": False,
-            })
+        available.append({
+            "key": key,
+            "label": label,
+            "installed": key in local_models,
+            "active": key == active,
+            "is_cloud": False,
+            "is_custom": False,
+        })
 
     # 也列出其他本地可用的可能视觉模型
     for m in sorted(local_models):
@@ -1569,19 +1588,13 @@ async def get_vl_model():
         if not cm.get("is_enabled", 1):
             continue
         model_key = cm["model_key"]
-        is_cloud = cm.get("model_type", "local") == "cloud"
-        if is_cloud:
-            #云端只要有key就算可用。key可以是数据库里单独配的 (cm.get("api_token"))，也可以是系统默认的 (dashscope_key)。
-            installed = bool(cm.get("api_token") or dashscope_key)
-        else:
-            #本地模型问 Ollama ，local_models 列表里有这个模型吗
-            installed = model_key in local_models
+        installed = bool(cm.get("api_token"))
         available.append({
             "key": model_key,
             "label": cm.get("label", model_key),
             "installed": installed,
             "active": model_key == active,
-            "is_cloud": is_cloud,
+            "is_cloud": True,
             "is_custom": True,
             "custom_id": cm["id"],
             "description": cm.get("description", ""),
@@ -1593,30 +1606,24 @@ async def get_vl_model():
 
 
 @app.post("/api/settings/vl_model")
-async def set_vl_model(
-    model: str = Form(...),
-):
+async def set_vl_model(model: str = Form(...)):
     """切换视觉模型，需要系统空闲"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法切换模型")
-    # 云端模型走独立逻辑
 
-    # 直接从环境变量读取key
-    dashscope_key = DASHSCOPE_API_TOKEN
+    # 第一步：查询数据库，获取自定义模型列表
+    custom_models = await db.get_custom_vl_models()
 
-    if model.startswith("dashscope:"):
-        # 内置云百炼模型只需要检查API Key
-        if not dashscope_key:
-            custom_models = await db.get_custom_vl_models()
-            custom_match = next((cm for cm in custom_models if cm["model_key"] == model), None)
-            if not custom_match or not custom_match.get("api_token"):
-                return err(400, "切换云百炼模型前请先配置 dashscope_api_key 或自定义模型的 API Token")
-        # 云端模型不需要检查本地Ollama，直接放行
-    elif model not in SUPPORTED_VL_MODELS:
-        # 检查模型是否在数据库中自定义列表中
-        custom_models = await db.get_custom_vl_models()
-        custom_keys = {cm["model_key"] for cm in custom_models}
-        # 允许切换为本地安装的其他模型
+    # 第二步：确定模型类型和验证方式
+    model_info = next((cm for cm in custom_models if cm["model_key"] == model), None)
+    is_cloud = False
+
+    if model_info:
+        is_cloud = model_info.get("model_type") == "cloud"
+        if is_cloud and not model_info.get("api_token"):
+            return err(400, "切换云端模型前请先配置API Token")
+    else:
+        # 本地模型：检查Ollama中是否存在
         try:
             import requests
             r = requests.get("http://localhost:11434/api/tags", timeout=3)
@@ -1626,9 +1633,12 @@ async def set_vl_model(
                 local_models = set()
         except Exception:
             local_models = set()
-        if model not in local_models:
+
+        # 检查模型是否在本地可用列表中
+        if model not in SUPPORTED_VL_MODELS and model not in local_models:
             return err(400, f"模型 {model} 不在可用列表中，请先通过 ollama pull 安装")
 
+    # 第四步：切换模型
     old_model = (await db.get_settings()).get("active_vl_model", "llava:7b")
     await db.update_setting("active_vl_model", model)
     await db.add_log("config", operation_action=f"vl_model_switch:{old_model}→{model}")
@@ -1638,79 +1648,6 @@ async def set_vl_model(
         "active_model": model,
     }, message=f"视觉模型已从 {old_model} 切换为 {model}")
 
-
-@app.get("/api/settings/vl_model/test")
-async def test_vl_model():
-    """测试当前视觉模型连通性（无图片，只检测API响应）"""
-    settings = await db.get_settings()
-    active_model = settings.get("active_vl_model", "llava:7b")
-    dashscope_key = DASHSCOPE_API_TOKEN
-
-    # 云端模型走独立测试逻辑
-    if active_model.startswith("dashscope:"):
-        if not dashscope_key:
-            return ok({"status": "error", "detail": "未配置 dashscope_api_key"})
-
-        try:
-            import requests
-            import base64
-
-            # 使用1x1透明像素PNG作为测试图片（极小，不会产生费用）
-            test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-
-            # 提取真实模型名
-            actual_model = active_model.replace("dashscope:", "")
-
-            resp = requests.post(
-                "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-                headers={
-                    "Authorization": f"Bearer {dashscope_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": actual_model,
-                    "input": {
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{test_image_b64}"}},
-                                {"type": "text", "text": "ping"}
-                            ]
-                        }]
-                    },
-                    "parameters": {"max_tokens": 10}
-                },
-                timeout=10
-            )
-
-            if resp.status_code == 200:
-                return ok({"status": "ok", "model": active_model, "type": "cloud"})
-            else:
-                error_detail = f"HTTP {resp.status_code}"
-                try:
-                    error_data = resp.json()
-                    if "message" in error_data:
-                        error_detail += f": {error_data['message']}"
-                except:
-                    pass
-                return ok({"status": "error", "detail": error_detail})
-
-        except Exception as e:
-            return ok({"status": "error", "detail": f"云百炼连接失败: {str(e)}"})
-    else:
-        try:
-            import requests
-            r = requests.post("http://localhost:11434/api/chat", json={
-                "model": (await db.get_settings()).get("active_vl_model", "llava:7b"),
-                "messages": [{"role": "user", "content": "ping"}],
-                "stream": False,
-            }, timeout=10)
-            if r.status_code == 200:
-                return ok({"status": "ok", "model": (await db.get_settings()).get("active_vl_model")})
-            else:
-                return ok({"status": "error", "detail": f"HTTP {r.status_code}"})
-        except Exception as e:
-            return ok({"status": "error", "detail": str(e)})
 
 
 # ─────────────────── 新增接口：自定义视觉模型 CRUD ───────────────────
@@ -1722,51 +1659,46 @@ async def list_custom_vl_models():
     return ok({"models": models})
 
 
+# ... existing code ...
 @app.post("/api/settings/vl_model/custom")
 async def create_custom_vl_model(
     model_key: str = Form(...),
     label: str = Form(...),
-    model_type: str = Form("local"),
     api_base_url: str = Form(""),
     api_token: str = Form(""),
+    api_format: str = Form("openai"),
     description: str = Form(""),
-    sort_order: int = Form(100),
 ):
     """新增自定义视觉模型"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法修改模型配置")
     if not model_key or not label:
         return err(400, "模型标识和显示名称不能为空")
-    if model_type not in ("local", "cloud"):
-        return err(400, "模型类型必须为 local 或 cloud")
-    if model_type == "cloud" and not api_base_url:
+    if api_format not in ("openai", "dashscope", "qwen_vl_legacy"):
+        return err(400, "API格式必须为 openai、dashscope 或 qwen_vl_legacy")
+    if not api_base_url:
         api_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    all_keys = set(VL_MODEL_OPTIONS.keys())
-    custom_models = await db.get_custom_vl_models()
-    for cm in custom_models:
-        all_keys.add(cm["model_key"])
-    if model_key in all_keys:
-        return err(400, f"模型标识 '{model_key}' 已存在，请使用其他名称")
-
     mid = await db.add_custom_vl_model(
-        model_key=model_key, label=label, model_type=model_type,
+        model_key=model_key, label=label, model_type="cloud",
         api_base_url=api_base_url, api_token=api_token,
-        description=description, sort_order=sort_order,
+        api_format=api_format,
+        description=description,
     )
     await db.add_log("config", operation_action=f"custom_model_add:{model_key}({label})")
     return ok({"id": mid, "model_key": model_key}, message=f"模型 {label} 添加成功")
 
 
+
+# ... existing code ...
 @app.put("/api/settings/vl_model/custom/{mid}")
 async def update_custom_vl_model(
     mid: int,
     label: str = Form(None),
-    model_type: str = Form(None),
     api_base_url: str = Form(None),
     api_token: str = Form(None),
+    api_format: str = Form(None),
     description: str = Form(None),
-    sort_order: int = Form(None),
     is_enabled: int = Form(None),
 ):
     """修改自定义视觉模型"""
@@ -1775,18 +1707,16 @@ async def update_custom_vl_model(
     updates = {}
     if label is not None:
         updates["label"] = label
-    if model_type is not None:
-        if model_type not in ("local", "cloud"):
-            return err(400, "模型类型必须为 local 或 cloud")
-        updates["model_type"] = model_type
     if api_base_url is not None:
         updates["api_base_url"] = api_base_url
     if api_token is not None:
         updates["api_token"] = api_token
+    if api_format is not None:
+        if api_format not in ("openai", "dashscope", "qwen_vl_legacy"):
+            return err(400, "API格式必须为 openai、dashscope 或 qwen_vl_legacy")
+        updates["api_format"] = api_format
     if description is not None:
         updates["description"] = description
-    if sort_order is not None:
-        updates["sort_order"] = sort_order
     if is_enabled is not None:
         updates["is_enabled"] = is_enabled
     if not updates:
@@ -1796,9 +1726,11 @@ async def update_custom_vl_model(
     return ok({"id": mid}, message="模型更新成功")
 
 
+
+# ... existing code ...
 @app.delete("/api/settings/vl_model/custom/{mid}")
 async def delete_custom_vl_model(mid: int):
-    """删除自定义视觉模型（逻辑删除）"""
+    """删除自定义视觉模型（移入回收站）"""
     if task_state.state != STATE_IDLE:
         return err(409, "系统忙，无法修改模型配置")
     models = await db.get_custom_vl_models()
@@ -1811,8 +1743,42 @@ async def delete_custom_vl_model(mid: int):
         return err(400, f"模型 '{target['label']}' 正在使用中，请先切换到其他模型再删除")
 
     await db.delete_custom_vl_model(mid)
-    await db.add_log("config", operation_action=f"custom_model_delete:{target['model_key']}")
-    return ok({"deleted_id": mid}, message=f"模型 {target['label']} 已删除")
+    await db.add_log("config", operation_action=f"custom_model_recycle:{target['model_key']}")
+    return ok({"deleted_id": mid}, message=f"模型 {target['label']} 已移入回收站")
+
+
+@app.get("/api/settings/vl_model/custom/recycle")
+async def list_deleted_custom_vl_models():
+    """获取回收站中的模型"""
+    models = await db.get_deleted_custom_vl_models()
+    return ok({"models": models})
+
+
+@app.post("/api/settings/vl_model/custom/recycle/{mid}/restore")
+async def restore_custom_vl_model(mid: int):
+    """从回收站恢复模型"""
+    deleted = await db.get_deleted_custom_vl_models()
+    target = next((m for m in deleted if m["id"] == mid), None)
+    if not target:
+        return err(404, "回收站中无此模型")
+    await db.restore_custom_vl_model(mid)
+    return ok({"id": mid}, message=f"模型 {target['label']} 已恢复")
+
+
+@app.delete("/api/settings/vl_model/custom/recycle/{mid}")
+async def hard_delete_custom_vl_model(mid: int):
+    """彻底删除模型（不可恢复）"""
+    deleted = await db.get_deleted_custom_vl_models()
+    target = next((m for m in deleted if m["id"] == mid), None)
+    if not target:
+        return err(404, "回收站中无此模型")
+    await db.hard_delete_custom_vl_model(mid)
+    await db.add_log("config", operation_action=f"custom_model_permanent_delete:{target['model_key']}")
+    return ok({"id": mid}, message=f"模型 {target['label']} 已永久删除")
+
+
+# ─────────────────── 接口：施工工序管理 ───────────────────
+# ... existing code ...
 
 
 # ─────────────────── 接口：施工工序管理 ───────────────────

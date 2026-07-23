@@ -57,7 +57,7 @@ class RetryHarness:
         return triggered
 
     def execute(self, image_path: str, initial_result: dict,
-                model: str) -> tuple[dict, list[str]]:
+                model: str, model_type: str = None) -> tuple[dict, list[str]]:
         """
         执行重试闭环。
 
@@ -103,7 +103,7 @@ class RetryHarness:
                 # 区域推理
                 try:
                     crop_raw = self.inferrer.infer(
-                        crop_prompt, crop_b64, model=model
+                        crop_prompt, crop_b64, model=model, model_type=model_type
                     )
                     new_val = parse_single_field(crop_raw, field)
 

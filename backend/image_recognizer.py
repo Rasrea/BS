@@ -24,17 +24,29 @@ from vision_harness import recognize_image as _harness_recognize
 logger = logging.getLogger(__name__)
 
 
-def recognize_image(image_path: str, model: str = "qwen2.5:7b") -> dict:
+def recognize_image(image_path: str, model: str = "qwen2.5:7b",
+                    model_type: str = None, api_base_url: str = None,
+                    api_token: str = None, api_format: str = None) -> dict:
     """
     识别单张效果图（委托 Harness 流水线）。
 
     返回格式与 v2.x 完全兼容。
     """
-    return _harness_recognize(image_path, model=model)
+    return _harness_recognize(image_path, model=model,
+                              model_type=model_type,
+                              api_base_url=api_base_url,
+                              api_token=api_token,
+                              api_format=api_format)
 
 
-def recognize_with_fallback(image_path: str, model: str = "qwen2.5:7b") -> dict:
+def recognize_with_fallback(image_path: str, model: str = "qwen2.5:7b",
+                            model_type: str = None, api_base_url: str = None,
+                            api_token: str = None, api_format: str = None) -> dict:
     """
     识别效果图（对外接口，与旧版兼容）。
     """
-    return _harness_recognize(image_path, model=model)
+    return _harness_recognize(image_path, model=model,
+                              model_type=model_type,
+                              api_base_url=api_base_url,
+                              api_token=api_token,
+                              api_format=api_format)

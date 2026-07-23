@@ -175,13 +175,13 @@ CREATE TABLE IF NOT EXISTS pricing_items (
 -- 10. 自定义视觉模型表[支持前端自定义模型操作]
 CREATE TABLE IF NOT EXISTS custom_vl_models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    model_key TEXT UNIQUE NOT NULL,
+    model_key TEXT NOT NULL,
     label TEXT NOT NULL,
     model_type TEXT NOT NULL DEFAULT 'local',
     api_base_url TEXT DEFAULT '',
     api_token TEXT DEFAULT '',
+    api_format TEXT DEFAULT 'openai',
     description TEXT DEFAULT '',
-    sort_order INTEGER DEFAULT 100,
     is_enabled INTEGER DEFAULT 1,
     create_time TEXT NOT NULL,
     update_time TEXT NOT NULL,
@@ -327,7 +327,16 @@ class Database:
                 )
             await self._conn.commit()
 
-    # ──────── 通用 ────────
+        # 迁移：为已有 custom_vl_models 表补充 api_format 字段
+        cols = await self.fetchall("PRAGMA table_info(custom_vl_models)")
+        col_names = {c["name"] for c in cols}
+        if "api_format" not in col_names:
+            await self._conn.execute(
+                "ALTER TABLE custom_vl_models ADD COLUMN api_format TEXT DEFAULT 'openai'"
+            )
+            await self._conn.commit()
+
+    # ─────────────────── 通用 ───────────────────
 
     async def execute(self, sql: str, params: tuple = ()):
         cur = await self._conn.execute(sql, params)
@@ -712,7 +721,7 @@ class Database:
 
     async def get_custom_vl_models(self):
         rows = await self.fetchall(
-            "SELECT * FROM custom_vl_models WHERE is_deleted=0 ORDER BY sort_order ASC, id ASC"
+            "SELECT * FROM custom_vl_models WHERE is_deleted=0 ORDER BY id ASC"
         )
         return [_row_to_dict(r) for r in rows]
 
@@ -720,19 +729,19 @@ class Database:
                                    model_type: str = "local",
                                    api_base_url: str = "",
                                    api_token: str = "",
-                                   description: str = "",
-                                   sort_order: int = 100):
+                                   api_format: str = "openai",
+                                   description: str = ""):
         now = _now()
         return await self.execute(
             """INSERT INTO custom_vl_models 
-               (model_key, label, model_type, api_base_url, api_token, description, sort_order, create_time, update_time) 
+               (model_key, label, model_type, api_base_url, api_token, api_format, description, create_time, update_time) 
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (model_key, label, model_type, api_base_url, api_token, description, sort_order, now, now)
+            (model_key, label, model_type, api_base_url, api_token, api_format, description, now, now)
         )
 
     async def update_custom_vl_model(self, mid: int, **kwargs):
         allowed = {"model_key", "label", "model_type", "api_base_url", "api_token",
-                   "description", "sort_order", "is_enabled"}
+                   "api_format", "description", "is_enabled"}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return
@@ -748,6 +757,21 @@ class Database:
         await self.execute(
             "UPDATE custom_vl_models SET is_deleted=1, update_time=? WHERE id=?", (now, mid)
         )
+
+    async def get_deleted_custom_vl_models(self):
+        rows = await self.fetchall(
+            "SELECT * FROM custom_vl_models WHERE is_deleted=1 ORDER BY update_time DESC"
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def restore_custom_vl_model(self, mid: int):
+        now = _now()
+        await self.execute(
+            "UPDATE custom_vl_models SET is_deleted=0, update_time=? WHERE id=?", (now, mid)
+        )
+
+    async def hard_delete_custom_vl_model(self, mid: int):
+        await self.execute("DELETE FROM custom_vl_models WHERE id=?", (mid,))
 
 
 # ─────────────────── 工具函数 ───────────────────
