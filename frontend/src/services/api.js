@@ -204,6 +204,19 @@ export const API = {
     try { const { data } = await api.delete(path); return data }
     catch (e) { return handleError(e) }
   },
+
+  // === CAD 测试误差评估 ===
+  async evaluateCadResult(cadResult, groundTruthJson) {
+    try {
+      const fd = new FormData()
+      fd.append('cad_result', JSON.stringify(cadResult))
+      fd.append('ground_truth_json', JSON.stringify(groundTruthJson))
+      const { data } = await api.post('/cad_test', fd, { timeout: 30000 })
+      return data
+    } catch (e) {
+      return handleError(e)
+    }
+  },
 }
 
 export default API

@@ -221,8 +221,16 @@
               <span class="text-xs font-medium text-gray-700 truncate">{{ f.name }}</span>
               <span class="text-[10px] text-gray-400">{{ f.file ? (f.file.size / 1024).toFixed(1) + ' KB' : '' }}</span>
               <span v-if="isDxfFile(f.name)" class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded">可预览</span>
+              <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值</span>
             </div>
             <div class="flex items-center gap-2">
+              <label v-if="!f.groundTruth" class="cursor-pointer text-[10px] px-2 py-1 bg-green-100 text-green-600 rounded hover:bg-green-200 transition-colors">
+                📋 上传真实值
+                <input type="file" accept=".json" @change="(e) => onGroundTruthFileChange(e, i)" class="hidden" />
+              </label>
+              <button v-else class="text-[10px] px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors" @click="removeGroundTruth(i)">
+                ✕ 移除真实值
+              </button>
               <button 
                 v-if="isDxfFile(f.name)"
                 class="text-[10px] px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 transition-colors"
@@ -235,8 +243,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 图片预览区 -->
 
       <!-- 图片预览区 -->
       <div v-if="files.length > 0" class="mb-4">
@@ -481,42 +487,40 @@
             
             <div v-if="r.success && r.data" class="text-xs space-y-2">
 
-              <div class="grid grid-cols-3 gap-2">
-                <div>
-                  <span class="text-gray-500">空间数:</span>
-                  <span class="font-medium ml-1">{{ r.data.space_count || (r.data.spaces ? r.data.spaces.length : 0) }}</span>
-                </div>
-                <div>
-                  <span class="text-gray-500">总面积:</span>
-                  <span class="font-medium ml-1">{{ r.data.total_area || 0 }} m²</span>
-                </div>
-                <div>
-                  <span class="text-gray-500">基础报价:</span>
-                  <span class="font-medium ml-1">¥{{ r.data.base_price || 0 }}</span>
-                </div>
-              </div>
-              
               <!-- 空间详情表格 -->
-              <div v-if="r.data.spaces && r.data.spaces.length > 0" class="mt-2">
-                <div class="text-[10px] text-gray-500 mb-1 font-semibold">空间明细:</div>
+              <div v-if="r.success && r.data && r.data.spaces && r.data.spaces.length > 0" class="mt-2">
                 <div class="overflow-x-auto">
-                  <table class="w-full text-[10px]">
+                  <table class="w-full text-[12px]">
                     <thead>
                       <tr class="bg-white/50">
                         <th class="text-left py-1 px-2 font-medium text-gray-600">空间名称</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">长度(m)</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">宽度(m)</th>
-                        <th class="text-left py-1 px-2 font-medium text-gray-600">图层</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)<br><span class="text-[9px] font-normal text-gray-400">解析值</span></th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)<br><span class="text-[9px] font-normal text-green-600">真实值</span></th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">误差</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">评级</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">周长(m)</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr v-for="(space, idx) in r.data.spaces" :key="idx" class="border-t border-gray-200 bg-white/30">
                         <td class="py-1 px-2 font-medium">{{ space.name || space.space_name || '-' }}</td>
                         <td class="py-1 px-2 text-center">{{ space.area || space.area_sqm || 0 }}</td>
-                        <td class="py-1 px-2 text-center">{{ space.length || space.dimensions?.width_m || '-' }}</td>
-                        <td class="py-1 px-2 text-center">{{ space.width || space.dimensions?.height_m || '-' }}</td>
-                        <td class="py-1 px-2 text-gray-600 truncate max-w-[80px]">{{ space.layer || '-' }}</td>
+                        <td class="py-1 px-2 text-center">
+                          <span class="text-green-600 font-medium">
+                            {{ getEvaluatedField(r, idx, 'gt_area') }}
+                          </span>
+                        </td>
+                        <td class="py-1 px-2 text-center">
+                          <span :class="getEvaluatedColor(r, idx)">
+                            {{ getEvaluatedField(r, idx, 'error_percent') }}%
+                          </span>
+                        </td>
+                        <td class="py-1 px-2 text-center">
+                          <span :class="getEvaluatedBadgeClass(r, idx)">
+                            {{ getEvaluatedLabel(r, idx) }}
+                          </span>
+                        </td>
+                        <td class="py-1 px-2 text-center">{{ space.perimeter_m || '-' }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -990,6 +994,8 @@ function onCadFilesChange(e) {
     done: false,
     failed: false,
     testing: false,
+    groundTruth: null,
+    groundTruthData: null,
   }))
   cadResults.value = []
   e.target.value = ''
@@ -1005,7 +1011,6 @@ function clearCadFiles() {
 function isDxfFile(filename) {
   return filename.toLowerCase().endsWith('.dxf')
 }
-
 
 // 预览 CAD 图纸
 function previewCadFile(filename) {
@@ -1024,6 +1029,75 @@ function previewCadFile(filename) {
   }
   reader.readAsArrayBuffer(cadFileObj.file)
 }
+
+// ========== Ground Truth JSON 处理（单个 CAD 文件关联） ==========
+function onGroundTruthFileChange(e, cadIndex) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  
+  const reader = new FileReader()
+  reader.onload = (evt) => {
+    try {
+      const jsonData = JSON.parse(evt.target.result)
+      cadFiles.value[cadIndex].groundTruth = file.name
+      cadFiles.value[cadIndex].groundTruthData = jsonData
+    } catch (err) {
+      alert(`解析 JSON 文件 "${file.name}" 失败: ${err.message}`)
+      return
+    }
+    e.target.value = ''
+  }
+  reader.readAsText(file)
+}
+
+function removeGroundTruth(cadIndex) {
+  cadFiles.value[cadIndex].groundTruth = null
+  cadFiles.value[cadIndex].groundTruthData = null
+}
+
+function getEvaluatedField(result, spaceIdx, field) {
+  const evaluation = result.data?.evaluation
+  if (!evaluation?.evaluations) return '-'
+  const evalItem = evaluation.evaluations[spaceIdx]
+  if (!evalItem) return '-'
+  return evalItem[field] !== null && evalItem[field] !== undefined ? evalItem[field] : '-'
+}
+
+function getEvaluatedColor(result, spaceIdx) {
+  const level = getEvaluatedField(result, spaceIdx, 'error_level')
+  if (level === 'excellent') return 'text-green-600 font-medium'
+  if (level === 'good') return 'text-green-600'
+  if (level === 'warning') return 'text-yellow-600'
+  if (level === 'poor') return 'text-red-600'
+  return 'text-gray-400'
+}
+
+function getEvaluatedBadgeClass(result, spaceIdx) {
+  const level = getEvaluatedField(result, spaceIdx, 'error_level')
+  const classes = {
+    excellent: 'bg-green-100 text-green-700',
+    good: 'bg-green-50 text-green-600',
+    warning: 'bg-yellow-100 text-yellow-700',
+    poor: 'bg-red-100 text-red-700',
+  }
+  return classes[level] || 'bg-gray-100 text-gray-500'
+}
+
+function getEvaluatedLabel(result, spaceIdx) {
+  const level = getEvaluatedField(result, spaceIdx, 'error_level')
+  const labels = {
+    excellent: '优秀',
+    good: '良好',
+    warning: '警告',
+    poor: '较差',
+    no_data: '无数据',
+  }
+  return labels[level] || '-'
+}
+
+
+
+
 
 async function startCadBatchTest() {
   if (cadFiles.value.length === 0) return
@@ -1047,10 +1121,20 @@ async function startCadBatchTest() {
       const apiData = apiSuccess ? res?.data : null
       const apiError = res?.message || (res?.code ? `错误码: ${res.code}` : null)
       
+      let evaluatedData = apiData
+      
+      // 如果有真实值，调用评估接口
+      if (apiSuccess && f.groundTruthData && f.groundTruthData.spaces !== undefined) {
+        const evalRes = await API.evaluateCadResult(apiData, f.groundTruthData)
+        if (evalRes.success && evalRes.data) {
+          evaluatedData = { ...apiData, evaluation: evalRes.data }
+        }
+      }
+      
       const resultEntry = {
         filename: f.name,
         success: apiSuccess,
-        data: apiData,
+        data: evaluatedData,
         error: apiError,
         timestamp: new Date().toLocaleString(),
         showRaw: false

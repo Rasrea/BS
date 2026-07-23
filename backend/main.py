@@ -644,7 +644,7 @@ async def vision_test(
     }
 
     return ok(result)    
-    
+   
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
     """PDF施工图识别：PDF→图片→复用LLaVA识别"""
@@ -703,6 +703,120 @@ async def analyze_pdf(pdf_file: UploadFile = File(None)):
     }, task_status=STATE_IDLE, trace_id=tid)
 
 
+# ─────────────────── 接口：CAD 解析误差评估（对比真实值） ───────────────────
+    
+@app.post("/api/cad_test")
+async def cad_test(
+    cad_result: str = Form(""),
+    ground_truth_json: str = Form(""),
+):
+    """
+    CAD 解析结果与真实值对比评估
+    
+    Args:
+        cad_result: JSON 字符串，CAD 解析结果（包含 spaces 列表）
+        ground_truth_json: JSON 字符串，真实值数据
+    
+    Returns:
+        每个空间的面积误差、百分比误差等评估信息
+    """
+    try:
+        cad_data = json.loads(cad_result) if cad_result else {}
+        gt_data = json.loads(ground_truth_json) if ground_truth_json else {}
+    except json.JSONDecodeError as e:
+        return err(400, f"JSON 格式错误: {e}")
+    
+    # 提取 spaces 列表
+    spaces = []
+    if isinstance(cad_data, dict):
+        spaces = cad_data.get("spaces", [])
+    elif isinstance(cad_data, list):
+        spaces = cad_data
+    
+    if not spaces:
+        return err(400, "CAD 结果中未找到 spaces 数据")
+    
+    # 构建 ground truth 查找表：space_name -> area
+    gt_map = {}
+    if isinstance(gt_data, list):
+        for item in gt_data:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("space_name")
+                area = item.get("area") or item.get("area_sqm")
+                if name and area is not None:
+                    gt_map[name] = float(area)
+    elif isinstance(gt_data, dict):
+        gt_spaces = gt_data.get("spaces", [])
+        for item in gt_spaces:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("space_name")
+                area = item.get("area") or item.get("area_sqm")
+                if name and area is not None:
+                    gt_map[name] = float(area)
+    
+    # 计算每个空间的误差
+    evaluations = []
+    total_parsed_area = 0
+    total_gt_area = 0
+    
+    for space in spaces:
+        if not isinstance(space, dict):
+            continue
+        
+        space_name = space.get("name") or space.get("space_name") or "未知空间"
+        parsed_area = float(space.get("area") or space.get("area_sqm") or 0)
+        perimeter = space.get("perimeter_m")
+        
+        gt_area = gt_map.get(space_name)
+        
+        error_info = {
+            "space_name": space_name,
+            "parsed_area": parsed_area,
+            "gt_area": gt_area,
+            "error_absolute": None,
+            "error_percent": None,
+            "error_level": "no_data",
+        }
+        
+        if gt_area is not None and gt_area != 0:
+            abs_error = abs(parsed_area - gt_area)
+            pct_error = (abs_error / gt_area) * 100
+            
+            error_info["error_absolute"] = round(abs_error, 2)
+            error_info["error_percent"] = round(pct_error, 2)
+            
+            if pct_error <= 5:
+                error_info["error_level"] = "excellent"
+            elif pct_error <= 15:
+                error_info["error_level"] = "good"
+            elif pct_error <= 30:
+                error_info["error_level"] = "warning"
+            else:
+                error_info["error_level"] = "poor"
+            
+            total_parsed_area += parsed_area
+            total_gt_area += gt_area
+        
+        evaluations.append(error_info)
+    
+    # 总体统计
+    overall_error = None
+    if total_gt_area > 0:
+        overall_error = round((abs(total_parsed_area - total_gt_area) / total_gt_area) * 100, 2)
+    
+    result = {
+        "evaluations": evaluations,
+        "summary": {
+            "total_spaces": len(evaluations),
+            "spaces_with_gt": sum(1 for e in evaluations if e["gt_area"] is not None),
+            "overall_error_percent": overall_error,
+            "total_parsed_area": round(total_parsed_area, 2),
+            "total_gt_area": round(total_gt_area, 2),
+        },
+    }
+    
+    return ok(result)
+   
 # ─────────────────── 接口：数据融合 ───────────────────
 
 @app.post("/api/data_merge")
