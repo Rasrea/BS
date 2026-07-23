@@ -165,16 +165,78 @@
           </span>
           <span class="text-[10px] text-gray-400">将图像分为天花板/墙面/地面分别识别</span>
         </div>
+
+        <!-- 图像识别和cad图纸检测切换开关 -->
+        <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-200">
+          <span class="text-xs text-gray-500 whitespace-nowrap">🔄 测试模式:</span>
+          <button
+            @click="testMode = 'image'"
+            class="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+            :class="testMode === 'image' ? 'bg-primary-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'"
+          >
+            🖼️ 效果图识别
+          </button>
+          <button
+            @click="testMode = 'cad'"
+            class="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+            :class="testMode === 'cad' ? 'bg-primary-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'"
+          >
+            📐 CAD 解析
+          </button>
+        </div>
       </div>
 
       <!-- 上传区域 -->
       <div class="mb-4">
-        <label class="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 text-sm font-medium">
-          📁 选择图片（可多选）
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onFilesChange" class="hidden" />
-        </label>
-        <span class="text-xs text-gray-400 ml-3">支持多选，按顺序逐个测试</span>
+        <template v-if="testMode === 'image'">
+          <label class="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 text-sm font-medium">
+            📁 选择图片（可多选）
+            <input type="file" accept="image/jpeg,image/png,image/webp" multiple @change="onFilesChange" class="hidden" />
+          </label>
+          <span class="text-xs text-gray-400 ml-3">支持多选，按顺序逐个测试</span>
+        </template>
+        
+        <template v-else>
+          <label class="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-primary-50 text-primary-700 rounded-lg hover:bg-primary-100 text-sm font-medium">
+            📐 选择CAD文件（.dxf/.dwg/.pdf）
+            <input type="file" accept=".dxf,.dwg,.pdf" multiple @change="onCadFilesChange" class="hidden" />
+          </label>
+          <span class="text-xs text-gray-400 ml-3">支持 DXF、DWG、PDF 格式</span>
+        </template>
       </div>
+
+      <!-- CAD 文件列表（选择后立即显示预览按钮） -->
+      <div v-if="testMode === 'cad' && cadFiles.length > 0" class="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-medium text-blue-700">已选 {{ cadFiles.length }} 个CAD文件</span>
+          <button class="text-xs text-red-500 hover:text-red-700" @click="clearCadFiles">清空全部</button>
+        </div>
+        <div class="space-y-1.5">
+          <div v-for="(f, i) in cadFiles" :key="i"
+               class="flex items-center justify-between p-2 bg-white rounded border border-blue-100">
+            <div class="flex items-center gap-2 min-w-0">
+              <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span class="text-xs font-medium text-gray-700 truncate">{{ f.name }}</span>
+              <span class="text-[10px] text-gray-400">{{ f.file ? (f.file.size / 1024).toFixed(1) + ' KB' : '' }}</span>
+              <span v-if="isDxfFile(f.name)" class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded">可预览</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button 
+                v-if="isDxfFile(f.name)"
+                class="text-[10px] px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 transition-colors"
+                @click="previewCadFile(f.name)"
+              >
+                🔍 预览图纸
+              </button>
+              <span v-else class="text-[10px] text-gray-400">仅支持DXF预览</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图片预览区 -->
 
       <!-- 图片预览区 -->
       <div v-if="files.length > 0" class="mb-4">
@@ -220,14 +282,31 @@
 
       <!-- 按钮 -->
       <div class="flex items-center gap-3 mb-4">
-        <button class="btn-primary" :disabled="files.length === 0 || testing" @click="startBatchTest">
+        <button 
+          v-if="testMode === 'image'"
+          class="btn-primary" 
+          :disabled="files.length === 0 || testing" 
+          @click="startBatchTest"
+        >
           <svg v-if="testing" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          {{ testing ? `测试中 ${doneCount}/${files.length}...` : '🚀 批量测试' }}
+          {{ testing ? `测试中 ${doneCount}/${files.length}...` : '🚀 批量测试效果图' }}
         </button>
-        <span v-if="testing" class="text-xs text-primary-600 animate-pulse">{{ testEnvStatus }}</span>
+        
+        <button 
+          v-else
+          class="btn-primary" 
+          :disabled="cadFiles.length === 0 || testingCad" 
+          @click="startCadBatchTest"
+        >
+          <svg v-if="testingCad" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          {{ testingCad ? '解析中...' : '🚀 批量测试CAD解析' }}
+        </button>
       </div>
 
       <!-- 进度条 -->
@@ -239,7 +318,7 @@
       </div>
     </div>
 
-    <!-- 汇总结果 -->
+    <!-- 图像汇总结果 -->
     <div v-if="results.length > 0" class="space-y-3">
       <!-- 汇总表 -->
       <div class="card">
@@ -289,7 +368,7 @@
           class="text-xs px-3 py-1.5 bg-green-50 text-green-600 rounded hover:bg-green-100 transition-colors"
           @click="exportResults('json')"
         >
-          📥 导出 JSON
+          📥 导出 JSON汇总结果
         </button>
       </div>
 
@@ -387,18 +466,93 @@
       </div>
     </div>
 
-    <!-- 空状态 -->
-    <div v-if="files.length === 0 && results.length === 0" class="card text-center text-gray-400 py-8">
-      <p class="text-4xl mb-3">🧪</p>
-      <p class="text-sm">选择一张或多张效果图，测试视觉模型识别效果</p>
-      <p class="text-xs mt-2">不写数据库、不走融合流程、纯模型诊断 + 对比</p>
+    <!-- CAD 测试结果 -->
+    <div v-if="testMode === 'cad' && cadResults.length > 0" class="space-y-3">
+      <div class="card">
+        <h4 class="text-xs font-semibold text-gray-600 mb-2">📊 CAD 解析结果</h4>
+        <div class="space-y-2">
+          <div v-for="(r, i) in cadResults" :key="i" class="border rounded p-2" :class="r.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-medium">{{ i + 1 }}. {{ r.filename }}</span>
+              <span class="text-[10px]" :class="r.success ? 'text-green-600' : 'text-red-600'">
+                {{ r.success ? '✓ 成功' : '✗ 失败' }}
+              </span>
+            </div>
+            
+            <div v-if="r.success && r.data" class="text-xs space-y-2">
+
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <span class="text-gray-500">空间数:</span>
+                  <span class="font-medium ml-1">{{ r.data.space_count || (r.data.spaces ? r.data.spaces.length : 0) }}</span>
+                </div>
+                <div>
+                  <span class="text-gray-500">总面积:</span>
+                  <span class="font-medium ml-1">{{ r.data.total_area || 0 }} m²</span>
+                </div>
+                <div>
+                  <span class="text-gray-500">基础报价:</span>
+                  <span class="font-medium ml-1">¥{{ r.data.base_price || 0 }}</span>
+                </div>
+              </div>
+              
+              <!-- 空间详情表格 -->
+              <div v-if="r.data.spaces && r.data.spaces.length > 0" class="mt-2">
+                <div class="text-[10px] text-gray-500 mb-1 font-semibold">空间明细:</div>
+                <div class="overflow-x-auto">
+                  <table class="w-full text-[10px]">
+                    <thead>
+                      <tr class="bg-white/50">
+                        <th class="text-left py-1 px-2 font-medium text-gray-600">空间名称</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">长度(m)</th>
+                        <th class="text-center py-1 px-2 font-medium text-gray-600">宽度(m)</th>
+                        <th class="text-left py-1 px-2 font-medium text-gray-600">图层</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(space, idx) in r.data.spaces" :key="idx" class="border-t border-gray-200 bg-white/30">
+                        <td class="py-1 px-2 font-medium">{{ space.name || space.space_name || '-' }}</td>
+                        <td class="py-1 px-2 text-center">{{ space.area || space.area_sqm || 0 }}</td>
+                        <td class="py-1 px-2 text-center">{{ space.length || space.dimensions?.width_m || '-' }}</td>
+                        <td class="py-1 px-2 text-center">{{ space.width || space.dimensions?.height_m || '-' }}</td>
+                        <td class="py-1 px-2 text-gray-600 truncate max-w-[80px]">{{ space.layer || '-' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              
+              <!-- 原始数据折叠 -->
+              <button class="text-[10px] text-primary-600 hover:text-primary-800" @click="r.showRaw = !r.showRaw">
+                {{ r.showRaw ? '收起原始数据' : '展开原始数据' }}
+              </button>
+              <pre v-if="r.showRaw" class="text-[10px] bg-gray-900 text-green-300 p-2 rounded overflow-x-auto max-h-32 overflow-y-auto">{{ JSON.stringify(r.data, null, 2) }}</pre>
+            </div>
+            
+            <div v-else class="text-xs text-red-500">
+              {{ r.error || '无数据' }}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+
+
+    <!-- 空状态 -->
+    <div v-if="files.length === 0 && cadFiles.length === 0 && results.length === 0 && cadResults.length === 0" class="card text-center text-gray-400 py-8">
+      <p class="text-4xl mb-3">{{ testMode === 'image' ? '🧪' : '📐' }}</p>
+      <p class="text-sm">{{ testMode === 'image' ? '选择一张或多张效果图，测试视觉模型识别效果' : '选择CAD文件，测试解析和报价功能' }}</p>
+      <p class="text-xs mt-2">不写数据库、不走融合流程、纯诊断用途</p>
+    </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import API from '../services/api.js'
+const emit = defineEmits(['cad-preview'])  // cad预览按钮
 
 const files = ref([])
 const testing = ref(false)
@@ -408,6 +562,12 @@ const selectedModel = ref('qwen2.5:7b')
 const activeModel = ref('')
 const availableModels = ref([])
 const doneCount = ref(0)
+
+// 图像识别和cad检测
+const testMode = ref('image') // 'image' | 'cad'
+const cadFiles = ref([]) // CAD 文件列表
+const cadResults = ref([]) // CAD 测试结果
+const testingCad = ref(false) // CAD 测试中状态
 
 // ========== 新增：模型管理 ==========
 const showModelManager = ref(false)
@@ -819,4 +979,106 @@ async function startBatchTest() {
 
   testing.value = false
 }
+
+// CAD 文件处理函数
+function onCadFilesChange(e) {
+  const newFiles = Array.from(e.target.files || [])
+  cadFiles.value = newFiles.map(f => ({
+    file: f,
+    name: f.name,
+    url: null,
+    done: false,
+    failed: false,
+    testing: false,
+  }))
+  cadResults.value = []
+  e.target.value = ''
+}
+
+// 清空 CAD 文件列表
+function clearCadFiles() {
+  cadFiles.value = []
+  cadResults.value = []
+}
+
+// 判断是否为 DXF 文件
+function isDxfFile(filename) {
+  return filename.toLowerCase().endsWith('.dxf')
+}
+
+
+// 预览 CAD 图纸
+function previewCadFile(filename) {
+  const cadFileObj = cadFiles.value.find(f => f.name === filename)
+  if (!cadFileObj || !cadFileObj.file) {
+    alert('找不到文件数据')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    emit('cad-preview', {
+      name: cadFileObj.file.name,
+      buffer: e.target.result
+    })
+  }
+  reader.readAsArrayBuffer(cadFileObj.file)
+}
+
+async function startCadBatchTest() {
+  if (cadFiles.value.length === 0) return
+  testingCad.value = true
+  cadResults.value = []
+
+  const newResults = []
+  
+  for (const f of cadFiles.value) {
+    f.testing = true
+    f.showRaw = false
+    
+    const fd = new FormData()
+    fd.append('cad_file', f.file)
+    fd.append('project_name', '视觉测试工程')
+    
+    try {
+      const res = await API.post('/analyze_full', fd, { timeout: 120000 })
+      
+      const apiSuccess = res?.success === true
+      const apiData = apiSuccess ? res?.data : null
+      const apiError = res?.message || (res?.code ? `错误码: ${res.code}` : null)
+      
+      const resultEntry = {
+        filename: f.name,
+        success: apiSuccess,
+        data: apiData,
+        error: apiError,
+        timestamp: new Date().toLocaleString(),
+        showRaw: false
+      }
+      
+      newResults.push(resultEntry)
+      
+      f.done = apiSuccess
+      f.failed = !apiSuccess
+    } catch (err) {
+      console.error('CAD test error:', err)
+      newResults.push({
+        filename: f.name,
+        success: false,
+        data: null,
+        error: err.message || '请求失败',
+        timestamp: new Date().toLocaleString(),
+        showRaw: false
+      })
+      f.failed = true
+    }
+    
+    f.testing = false
+  }
+  
+  cadResults.value = newResults  
+  testingCad.value = false
+}
+
+
 </script>

@@ -305,7 +305,7 @@
 
       <!-- Tab 7: 识别测试 -->
       <div v-show="activeTab === 'vision_test'">
-        <VisionTestPanel />
+        <VisionTestPanel @cad-preview="onCadPreview" />
       </div>
     </main>
 
