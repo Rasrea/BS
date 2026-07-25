@@ -276,8 +276,7 @@
               <span class="text-xs font-medium text-gray-700 truncate">{{ f.name }}</span>
               <span class="text-[10px] text-gray-400">{{ f.file ? (f.file.size / 1024).toFixed(1) + ' KB' : '' }}</span>
               <span v-if="isDxfFile(f.name)" class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded">可预览</span>
-              <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值</span>
-            </div>
+              <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值 {{ f.groundTruth }}</span>            </div>
             <div class="flex items-center gap-2">
               <label v-if="!f.groundTruth" class="cursor-pointer text-[10px] px-2 py-1 bg-green-100 text-green-600 rounded hover:bg-green-200 transition-colors">
                 📋 上传真实值
@@ -541,6 +540,25 @@
             </div>
             
             <div v-if="r.success && r.data" class="text-xs space-y-2">
+              <!-- 整体 MSE 汇总 -->
+              <div v-if="r.success && r.data?.evaluation?.cad_evaluations?.overall_mse" 
+                   class="grid grid-cols-2 gap-2 mb-2">
+                <div class="p-1.5 bg-blue-50 rounded flex items-center justify-center gap-1 px-3" 
+                     v-if="r.data.evaluation.cad_evaluations.overall_mse.area_sqm != null">
+                  <span class="text-[12px] text-gray-500">面积 MSE：</span>
+                  <span class="text-xs font-bold text-blue-700">
+                    {{ r.data.evaluation.cad_evaluations.overall_mse.area_sqm.toFixed(2) }}
+                  </span>
+                </div>
+                <div class="p-1.5 bg-purple-50 rounded flex items-center justify-center gap-1 px-3"
+                     v-if="r.data.evaluation.cad_evaluations.overall_mse.perimeter_m != null">
+                  <span class="text-[12px] text-gray-500">周长 MSE：</span>
+                  <span class="text-xs font-bold text-purple-700">
+                    {{ r.data.evaluation.cad_evaluations.overall_mse.perimeter_m.toFixed(2) }}
+                  </span>
+                </div>
+
+              </div>
 
               <!-- 空间详情表格 -->
               <div v-if="r.success && r.data && r.data.spaces && r.data.spaces.length > 0" class="mt-2">
@@ -548,34 +566,41 @@
                   <table class="w-full text-[12px]">
                     <thead>
                       <tr class="bg-white/50">
-                        <th class="text-left py-1 px-2 font-medium text-gray-600">空间名称</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)<br><span class="text-[9px] font-normal text-gray-400">解析值</span></th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">面积(m²)<br><span class="text-[9px] font-normal text-green-600">真实值</span></th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">误差</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">评级</th>
-                        <th class="text-center py-1 px-2 font-medium text-gray-600">周长(m)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-gray-600">空间名称</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-gray-600">面积 (m²)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-blue-600">真实值 (m²)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-teal-500">绝对误差 (m²)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-gray-600">周长 (m)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-blue-600">真实值 (m)</th>
+                        <th class="text-center py-1.5 px-2 text-[12px] font-medium text-teal-500">绝对误差 (m)</th>
                       </tr>
                     </thead>
+
                     <tbody>
                       <tr v-for="(space, idx) in r.data.spaces" :key="idx" class="border-t border-gray-200 bg-white/30">
-                        <td class="py-1 px-2 font-medium">{{ space.name || space.space_name || '-' }}</td>
-                        <td class="py-1 px-2 text-center">{{ space.area || space.area_sqm || 0 }}</td>
+                        <td class="py-1 px-2 text-center font-medium">{{ space.name || space.space_name || '-' }}</td>
+                        <td class="py-1 px-2 text-center text-gray-700">{{ space.area_sqm ?? space.area ?? '-' }}</td>
                         <td class="py-1 px-2 text-center">
-                          <span class="text-green-600 font-medium">
-                            {{ getEvaluatedField(r, idx, 'gt_area') }}
+                          <span class="text-blue-600 font-medium">
+                            {{ getEvaluatedField(r, idx, 'true_area') }}
                           </span>
                         </td>
                         <td class="py-1 px-2 text-center">
-                          <span :class="getEvaluatedColor(r, idx)">
-                            {{ getEvaluatedField(r, idx, 'error_percent') }}%
+                          <span :class="getEvaluatedColor(r, idx, 'abs_error_area')">
+                            {{ getEvaluatedField(r, idx, 'abs_error_area') }}
+                          </span>
+                        </td>
+                        <td class="py-1 px-2 text-center text-gray-700">{{ space.perimeter_m ?? '-' }}</td>
+                        <td class="py-1 px-2 text-center">
+                          <span class="text-blue-600 font-medium">
+                            {{ getEvaluatedField(r, idx, 'true_perimeter') }}
                           </span>
                         </td>
                         <td class="py-1 px-2 text-center">
-                          <span :class="getEvaluatedBadgeClass(r, idx)">
-                            {{ getEvaluatedLabel(r, idx) }}
+                          <span :class="getEvaluatedColor(r, idx, 'abs_error_perimeter')">
+                            {{ getEvaluatedField(r, idx, 'abs_error_perimeter') }}
                           </span>
                         </td>
-                        <td class="py-1 px-2 text-center">{{ space.perimeter_m || '-' }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -647,6 +672,8 @@ async function loadCustomModels() {
     customModels.value = res.data.models || []
   }
 }
+
+// ====================== 图像识别 ======================
 
 function startAddModel() {
   editingModel.value = {
@@ -948,10 +975,7 @@ function similarityColor(sim) {
   return 'text-red-600'
 }
 
-/**
- * 导出测试结果
- * @param {'csv'|'json'} format - 导出格式
- */
+// 导出测试结果
 function exportResults(format = 'csv') {
   if (results.value.length === 0) {
     alert('没有可导出的测试结果')
@@ -968,9 +992,8 @@ function exportResults(format = 'csv') {
   }
 }
 
-/**
- * 导出为 CSV 格式
- */
+
+// 导出为 CSV 格式
 function exportAsCSV(results, filename) {
   // CSV 表头
   const headers = [
@@ -1013,9 +1036,8 @@ function exportAsCSV(results, filename) {
   downloadFile(blob, `${filename}.csv`)
 }
 
-/**
- * 导出为 JSON 格式
- */
+
+// 导出为 JSON 格式
 function exportAsJSON(results, statsData, filename) {
   const exportData = {
     exportTime: new Date().toISOString(),
@@ -1039,9 +1061,7 @@ function exportAsJSON(results, statsData, filename) {
   downloadFile(blob, `${filename}.json`)
 }
 
-/**
- * 下载文件
- */
+// 下载文件
 function downloadFile(blob, filename) {
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
@@ -1116,6 +1136,8 @@ async function startBatchTest() {
   testing.value = false
 }
 
+// ====================== CAD 识别 ======================
+
 // CAD 文件处理函数
 function onCadFilesChange(e) {
   const newFiles = Array.from(e.target.files || [])
@@ -1162,7 +1184,7 @@ function previewCadFile(filename) {
   reader.readAsArrayBuffer(cadFileObj.file)
 }
 
-// ========== Ground Truth JSON 处理（单个 CAD 文件关联） ==========
+// 真实值 JSON 处理（单个 CAD 文件关联）
 function onGroundTruthFileChange(e, cadIndex) {
   const file = e.target.files?.[0]
   if (!file) return
@@ -1187,49 +1209,45 @@ function removeGroundTruth(cadIndex) {
   cadFiles.value[cadIndex].groundTruthData = null
 }
 
+// 通过列名获取后端测试数据
 function getEvaluatedField(result, spaceIdx, field) {
   const evaluation = result.data?.evaluation
-  if (!evaluation?.evaluations) return '-'
-  const evalItem = evaluation.evaluations[spaceIdx]
-  if (!evalItem) return '-'
-  return evalItem[field] !== null && evalItem[field] !== undefined ? evalItem[field] : '-'
-}
+  if (!evaluation) return '-'
+  
+  // 通过空间名称匹配，而非索引
+  const space = result.data.spaces?.[spaceIdx]
+  const spaceName = space?.name || space?.space_name
+  const room = evaluation.cad_evaluations?.rooms?.find(r => r.name === spaceName)
 
-function getEvaluatedColor(result, spaceIdx) {
-  const level = getEvaluatedField(result, spaceIdx, 'error_level')
-  if (level === 'excellent') return 'text-green-600 font-medium'
-  if (level === 'good') return 'text-green-600'
-  if (level === 'warning') return 'text-yellow-600'
-  if (level === 'poor') return 'text-red-600'
-  return 'text-gray-400'
-}
-
-function getEvaluatedBadgeClass(result, spaceIdx) {
-  const level = getEvaluatedField(result, spaceIdx, 'error_level')
-  const classes = {
-    excellent: 'bg-green-100 text-green-700',
-    good: 'bg-green-50 text-green-600',
-    warning: 'bg-yellow-100 text-yellow-700',
-    poor: 'bg-red-100 text-red-700',
+  if (field === 'true_area') {
+    const raw = evaluation.raw_data?.find(r => r.name === spaceName)
+    return raw?.true_area != null ? raw.true_area.toFixed(2) : '-'
   }
-  return classes[level] || 'bg-gray-100 text-gray-500'
-}
 
-function getEvaluatedLabel(result, spaceIdx) {
-  const level = getEvaluatedField(result, spaceIdx, 'error_level')
-  const labels = {
-    excellent: '优秀',
-    good: '良好',
-    warning: '警告',
-    poor: '较差',
-    no_data: '无数据',
+  if (field === 'abs_error_area') {
+    return room?.abs_error_area != null ? room.abs_error_area.toFixed(2) : '-'
   }
-  return labels[level] || '-'
+
+  if (field === 'true_perimeter') {
+    const raw = evaluation.raw_data?.find(r => r.name === spaceName)
+    return raw?.true_perimeter != null ? raw.true_perimeter.toFixed(2) : '-'
+  }
+
+  if (field === 'abs_error_perimeter') {
+    return room?.abs_error_perimeter != null ? room.abs_error_perimeter.toFixed(2) : '-'
+  }
+
 }
 
-
-
-
+// 根据误差结果分配颜色
+function getEvaluatedColor(result, spaceIdx, label) {
+  const val = getEvaluatedField(result, spaceIdx, label)
+  const num = parseFloat(val)
+  if (isNaN(num)) return 'text-gray-400'
+  if (num > 10) return 'text-red-600'
+  if (num > 5) return 'text-yellow-600'
+  return 'text-green-600'
+}
 
 async function startCadBatchTest() {
   if (cadFiles.value.length === 0) return
@@ -1255,9 +1273,16 @@ async function startCadBatchTest() {
       
       let evaluatedData = apiData
       
-      // 如果有真实值，调用评估接口
+      // 在 startCadBatchTest 中，构建评估用的数据时，补全 area_sqm 字段
       if (apiSuccess && f.groundTruthData && f.groundTruthData.spaces !== undefined) {
-        const evalRes = await API.evaluateCadResult(apiData, f.groundTruthData)
+        // 规范化 spaces 数据：确保包含 area_sqm 和 perimeter_m
+        const normalizedSpaces = (apiData.spaces || []).map(s => ({
+          ...s,
+          area_sqm: s.area_sqm ?? s.area ?? 0,
+          perimeter_m: s.perimeter_m ?? s.perimeter ?? null,
+        }))
+        const evalPayload = { ...apiData, spaces: normalizedSpaces }
+        const evalRes = await API.evaluateCadResult(evalPayload, f.groundTruthData)
         if (evalRes.success && evalRes.data) {
           evaluatedData = { ...apiData, evaluation: evalRes.data }
         }
@@ -1295,6 +1320,5 @@ async function startCadBatchTest() {
   cadResults.value = newResults  
   testingCad.value = false
 }
-
 
 </script>

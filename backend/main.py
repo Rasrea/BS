@@ -760,99 +760,64 @@ async def cad_test(
     Returns:
         每个空间的面积误差、百分比误差等评估信息
     """
+    
+    from vision_harness.cad_metrics import evaluate_cad_evaluations
+    
     try:
         cad_data = json.loads(cad_result) if cad_result else {}
-        gt_data = json.loads(ground_truth_json) if ground_truth_json else {}
+        true_data = json.loads(ground_truth_json) if ground_truth_json else {}
     except json.JSONDecodeError as e:
         return err(400, f"JSON 格式错误: {e}")
     
     # 提取 spaces 列表
-    spaces = []
-    if isinstance(cad_data, dict):
-        spaces = cad_data.get("spaces", [])
-    elif isinstance(cad_data, list):
-        spaces = cad_data
+    predict_spaces = []
+    predict_spaces = cad_data["spaces"]
     
-    if not spaces:
-        return err(400, "CAD 结果中未找到 spaces 数据")
+    if not predict_spaces:
+        return err(400, "CAD 结果中未找到 predict_spaces 数据")
     
-    # 构建 ground truth 查找表：space_name -> area
-    gt_map = {}
-    if isinstance(gt_data, list):
-        for item in gt_data:
-            if isinstance(item, dict):
-                name = item.get("name") or item.get("space_name")
-                area = item.get("area") or item.get("area_sqm")
-                if name and area is not None:
-                    gt_map[name] = float(area)
-    elif isinstance(gt_data, dict):
-        gt_spaces = gt_data.get("spaces", [])
-        for item in gt_spaces:
-            if isinstance(item, dict):
-                name = item.get("name") or item.get("space_name")
-                area = item.get("area") or item.get("area_sqm")
-                if name and area is not None:
-                    gt_map[name] = float(area)
+    # 构建真实值查找表：name -> area, perimeter
+    true_map = {}
+    true_spaces = true_data.get("spaces", [])
+    for item in true_spaces:
+        name = item.get("name")
+        true_map[name] = {
+            "area_sqm": item.get("area_sqm"), 
+            "perimeter_m": item.get("perimeter_m")
+        }       
     
     # 计算每个空间的误差
-    evaluations = []
-    total_parsed_area = 0
-    total_gt_area = 0
+    raw_data = []
     
-    for space in spaces:
-        if not isinstance(space, dict):
-            continue
+    for space in predict_spaces:
+        # 读取预测值
+        name = space.get("name") or "未知空间"
+        predict_area = float(space.get("area_sqm") or 0)
+        predict_perimeter = space.get("perimeter_m")
         
-        space_name = space.get("name") or space.get("space_name") or "未知空间"
-        parsed_area = float(space.get("area") or space.get("area_sqm") or 0)
-        perimeter = space.get("perimeter_m")
-        
-        gt_area = gt_map.get(space_name)
+        # 读取测试值
+        true_area = None
+        true_perimeter = None
+        if true_map.get(name):
+            true_area = true_map.get(name).get("area_sqm")
+            true_perimeter = true_map.get(name).get("perimeter_m")
         
         error_info = {
-            "space_name": space_name,
-            "parsed_area": parsed_area,
-            "gt_area": gt_area,
-            "error_absolute": None,
-            "error_percent": None,
-            "error_level": "no_data",
+            "name": name,
+            "predict_area": predict_area,
+            "true_area": true_area,
+            "predict_perimeter": predict_perimeter,
+            "true_perimeter": true_perimeter,
         }
         
-        if gt_area is not None and gt_area != 0:
-            abs_error = abs(parsed_area - gt_area)
-            pct_error = (abs_error / gt_area) * 100
-            
-            error_info["error_absolute"] = round(abs_error, 2)
-            error_info["error_percent"] = round(pct_error, 2)
-            
-            if pct_error <= 5:
-                error_info["error_level"] = "excellent"
-            elif pct_error <= 15:
-                error_info["error_level"] = "good"
-            elif pct_error <= 30:
-                error_info["error_level"] = "warning"
-            else:
-                error_info["error_level"] = "poor"
-            
-            total_parsed_area += parsed_area
-            total_gt_area += gt_area
-        
-        evaluations.append(error_info)
+        raw_data.append(error_info)
     
-    # 总体统计
-    overall_error = None
-    if total_gt_area > 0:
-        overall_error = round((abs(total_parsed_area - total_gt_area) / total_gt_area) * 100, 2)
-    
+    cad_evaluations = evaluate_cad_evaluations(raw_data)
+
     result = {
-        "evaluations": evaluations,
-        "summary": {
-            "total_spaces": len(evaluations),
-            "spaces_with_gt": sum(1 for e in evaluations if e["gt_area"] is not None),
-            "overall_error_percent": overall_error,
-            "total_parsed_area": round(total_parsed_area, 2),
-            "total_gt_area": round(total_gt_area, 2),
-        },
+        "total_spaces": len(raw_data),
+        "raw_data": raw_data,
+        "cad_evaluations": cad_evaluations,
     }
     
     return ok(result)
