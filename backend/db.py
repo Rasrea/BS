@@ -393,6 +393,54 @@ class Database:
         )
         return [_row_to_dict(r) for r in rows]
 
+    async def replace_cad_results(self, drawing_id: int, spaces: list, total_area: float):
+        now = _now()
+        await self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            await self._conn.execute(
+                "UPDATE cad_analysis_results SET is_deleted=1, update_time=? WHERE drawing_id=? AND is_deleted=0",
+                (now, drawing_id),
+            )
+            for space in spaces:
+                dimensions = space.get("dimensions", {})
+                await self._conn.execute(
+                    """INSERT INTO cad_analysis_results
+                    (drawing_id, space_name, length, width, height, area, base_price,
+                     detail_json, create_time, update_time)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        drawing_id,
+                        space.get("name", ""),
+                        dimensions.get("width_m", 0),
+                        dimensions.get("height_m", 0),
+                        2.8,
+                        space.get("area_sqm", 0),
+                        0,
+                        json.dumps(space, ensure_ascii=False),
+                        now,
+                        now,
+                    ),
+                )
+            await self._conn.execute(
+                """UPDATE drawing_records
+                SET parse_status=?, cad_result_json=?, update_time=?
+                WHERE id=? AND is_deleted=0""",
+                (
+                    "completed",
+                    json.dumps({
+                        "spaces_count": len(spaces),
+                        "total_area": total_area,
+                        "source": "manual_annotation",
+                    }, ensure_ascii=False),
+                    now,
+                    drawing_id,
+                ),
+            )
+            await self._conn.commit()
+        except Exception:
+            await self._conn.rollback()
+            raise
+
     async def update_cad_detail_json(self, cad_id: int, detail: dict):
         """更新单个 CAD 结果的 detail_json 字段"""
         now = _now()

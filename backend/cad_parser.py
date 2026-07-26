@@ -75,7 +75,7 @@ def parse_cad_file(file_path: str) -> dict:
         }
 
 
-# == DXF 矢量解析（保持原有逻辑） ==
+# == DXF 矢量解析（待按 DXF_REWRITE_PLAN.md 重写） ==
 
 def _parse_dxf(file_path: str) -> dict:
     import ezdxf
@@ -83,11 +83,18 @@ def _parse_dxf(file_path: str) -> dict:
 
     try:
         doc = ezdxf.readfile(file_path)
+        auditor = doc.audit()
+        dxf_repair_count = len(auditor.fixes)
     except Exception as e:
         return {"error": f"DXF 文件读取失败: {str(e)}", "spaces": [], "parse_method": "dxf矢量解析"}
 
     msp = doc.modelspace()
 
+    # DXF V2 TODO [P0-标准化]: 读取 $INSUNITS 并统一换算到毫米；处理 OCS/WCS、
+    # INSERT/BLOCK 的平移、旋转和缩放，避免直接把原始坐标当作毫米坐标。
+
+    # DXF V2 TODO [P0-实体提取]: 不应只识别 LWPOLYLINE。需要统一提取
+    # LWPOLYLINE、POLYLINE、HATCH 边界，并保留 bulge/ARC 曲线信息和实体 handle。
     polylines = []
     for entity in msp.query("LWPOLYLINE"):
         points = [(v[0], v[1]) for v in entity.get_points()]
@@ -103,15 +110,17 @@ def _parse_dxf(file_path: str) -> dict:
             "height": entity.dxf.height,
         })
     for entity in msp.query("MTEXT"):
-        t = entity.plain_text().strip()
-        if t:
+        text = entity.plain_text().strip()
+        if text:
             texts.append({
-                "text": t,
+                "text": text,
                 "position": (entity.dxf.insert.x, entity.dxf.insert.y),
                 "layer": entity.dxf.layer,
                 "height": 4.0,
             })
 
+    # DXF V2 TODO [P1-尺寸]: DIMENSION 只作为几何结果的校验证据，不用于创造房间；
+    # 正确处理 <>、文字覆盖、dimlfac、前后缀和不同标注类型。
     dimensions = []
     for entity in msp.query("DIMENSION"):
         try:
@@ -139,6 +148,8 @@ def _parse_dxf(file_path: str) -> dict:
         except Exception:
             pass
 
+    # DXF V2 TODO [P1-语义]: 房间词典、文本黑名单和图层规则应移到可配置模块，
+    # 文本分类应输出候选类型与证据，不能仅依赖子串命中。
     room_keywords = [
         "客厅", "餐厅", "主卧", "次卧", "卧室", "厨房", "客房",
         "卫生间", "厕所", "浴室", "阳台", "书房", "衣帽间",
@@ -164,6 +175,8 @@ def _parse_dxf(file_path: str) -> dict:
         "foyer", "hall", "lobby", "atrium",
     ]
 
+    # DXF V2 TODO [P0-几何]: 这里需要替换为“空间候选生成”流程：离散化曲线、
+    # 校验/修复 Polygon、处理洞，并根据单位自适应面积范围，不能硬编码平方毫米阈值。
     valid_polylines = []
     for pl in polylines:
         poly = Polygon(pl["points"])
@@ -240,6 +253,8 @@ def _parse_dxf(file_path: str) -> dict:
         return False
 
     # ── 构建所有候选文字标签（先关键词过滤，保留全部候选用于兜底）──
+    # DXF V2 TODO [P0-图层]: 删除固定白名单依赖。图层先做名称归一化，再结合
+    # 图层名称、实体组成和项目配置推断 wall/room/text/dimension 等角色。
     ROOM_TEXT_LAYERS = {"000-墙体1", "0", "TEXT", "标注", "文字", "房间名", "空间名", "名称", "公共"}
 
     # 一层：含关键词的文字（高置信度）
@@ -289,9 +304,13 @@ def _parse_dxf(file_path: str) -> dict:
     fallback_labels = [rl for rl in fallback_labels
                        if (round(rl["pt"].x, -2), round(rl["pt"].y, -2)) not in kw_pt_keys]
 
+    # DXF V2 TODO [P0-候选清洗]: 在标签关联前处理重复、近似重合、包含和交叠关系；
+    # 不能仅按面积降序，因为建筑外框可能优先消费所有内部标签。
     # 按面积降序排列多边形，大空间优先匹配房间名
     valid_polylines.sort(key=lambda vp: vp["polygon"].area, reverse=True)
 
+    # DXF V2 TODO [P0-标签关联]: 只自动确认位于候选空间内部的标签；内部有多个标签时
+    # 根据图层、文本类型、字高和距 representative_point 的距离评分。外部最近标签只能告警，不能强配。
     def _find_best_label(poly, unused_labels):
         """找最佳匹配标签：先检查文本是否在多边形内部，其次就近匹配"""
         centroid = poly.centroid
@@ -335,6 +354,8 @@ def _parse_dxf(file_path: str) -> dict:
                 spaces_raw[i] = (best_name, poly, points)
                 unused_fallback.pop(best_idx)
 
+    # DXF V2 TODO [P0-结果]: 面积需注明口径和边界来源；宽高使用最小旋转矩形，
+    # 异形空间不强行解释为开间/进深；置信度由可追溯证据计算，不能使用固定常量。
     result_spaces = []
     for name, poly, points in spaces_raw:
         try:
@@ -345,6 +366,8 @@ def _parse_dxf(file_path: str) -> dict:
                 "name": name,
                 "area_sqm": round(area_m2, 2),
                 "perimeter_m": round(perimeter_m, 2),
+                "vertices": [[float(x), float(y)] for x, y in points],
+                "boundary_source": "lwpolyline",
                 "dimensions": {
                     "width_mm": round(maxx - minx),
                     "height_mm": round(maxy - miny),
@@ -357,12 +380,32 @@ def _parse_dxf(file_path: str) -> dict:
         except Exception:
             pass
 
+    # DXF V2 TODO [P0-停用]: 当前墙线兜底没有从 segments 构造边界，输出主要来自
+    # 标签间距、默认尺寸和经验系数。新版上线前应停用，避免估算面积进入自动报价。
     # ── 补充：当LW闭合多边形无法提取房间时，使用LINE墙体线+尺寸标注推算 ──
     if len(result_spaces) == 0 and keyword_labels:
         result_spaces = _calc_rooms_from_lines(msp, keyword_labels, dimensions)
-        parse_method = "dxf墙体线推算"
+        parse_method = "dxf墙线拓扑识别"
+        needs_manual_review = True
+        if result_spaces:
+            furniture_fallback_names = [
+                space["name"]
+                for space in result_spaces
+                if space.get("boundary_source") == "wall_mask_furniture_fallback"
+            ]
+            if furniture_fallback_names:
+                manual_review_reason = (
+                    f"{', '.join(furniture_fallback_names)} 的闭合边界受家具混线影响，"
+                    "已作为低置信预填保留，请优先人工核对"
+                )
+            else:
+                manual_review_reason = "已从墙线拓扑生成候选房间边界，请人工调整并核对低置信区域"
+        else:
+            manual_review_reason = "墙线无法形成包含房间文字的可靠闭合区域，请进入人工测量补画"
     else:
         parse_method = "dxf矢量解析"
+        needs_manual_review = any(space.get("confidence", 0) < 0.8 for space in result_spaces)
+        manual_review_reason = "部分空间名称或边界置信度较低，请在人工测量中核对" if needs_manual_review else ""
 
     return {
         "spaces": result_spaces,
@@ -370,12 +413,732 @@ def _parse_dxf(file_path: str) -> dict:
         "total_texts": len(texts),
         "total_dimensions": len(dimensions),
         "parse_method": parse_method,
+        "needs_manual_review": needs_manual_review,
+        "manual_review_reason": manual_review_reason,
+        "dxf_repair_count": dxf_repair_count,
     }
 
 
-# ── LINE墙体线+尺寸标注推算房间面积（兜底方案，当DXF墙体用LINE画时） ──
+# ── 墙线拓扑兜底：从线网构造真实闭合区域 ──
 
 def _calc_rooms_from_lines(msp, room_labels, dimensions) -> list:
+    import math
+    from statistics import median
+
+    from shapely.geometry import LineString, Point, box
+    from shapely.ops import polygonize, snap, split, unary_union
+
+    del dimensions  # 尺寸标注仅作为后续校验依据，不用于创造房间边界。
+
+    wall_tokens = (
+        "墙", "建筑", "结构", "模块外线", "wall", "a-wall", "partition", "structure",
+    )
+    auxiliary_tokens = (
+        "标注", "尺寸", "轴", "文字", "家具", "洁具", "电气", "门", "窗",
+        "dimension", "dim", "axis", "text", "furniture", "door", "window",
+        "hatch", "填充",
+    )
+    furniture_tokens = (
+        "家具", "衣柜", "橱柜", "柜", "床", "桌", "椅", "沙发", "茶几", "马桶",
+        "洁具", "灶", "水槽", "洗衣", "冰箱", "电视", "浴缸", "花洒", "盆",
+        "furniture", "sofa", "table", "chair", "bed", "cabinet", "wardrobe",
+        "toilet", "sink", "stove", "appliance",
+    )
+    opening_tokens = (
+        "门", "窗", "door", "window", "opening", "推拉", "平开", "折叠",
+    )
+    annotation_tokens = (
+        "标注", "尺寸", "文字", "轴", "图框", "索引", "引线", "填充",
+        "dimension", "annotation", "text", "axis", "frame", "hatch",
+    )
+
+    def iter_source_entities(entities, parent_layer="0", block_path=(), depth=0):
+        if depth > 12:
+            return
+        for entity in entities:
+            raw_layer = str(entity.dxf.get("layer", "0"))
+            effective_layer = parent_layer if raw_layer == "0" and parent_layer != "0" else raw_layer
+            if entity.dxftype() != "INSERT":
+                yield entity, raw_layer, effective_layer, block_path
+                continue
+            block_name = str(entity.dxf.get("name", ""))
+            try:
+                virtual_entities = list(entity.virtual_entities())
+            except Exception:
+                continue
+            yield from iter_source_entities(
+                virtual_entities,
+                effective_layer,
+                (*block_path, block_name),
+                depth + 1,
+            )
+
+    def entity_segments(entity):
+        entity_type = entity.dxftype()
+        points = []
+        closed = False
+        if entity_type == "LINE":
+            points = [entity.dxf.start, entity.dxf.end]
+        elif entity_type == "LWPOLYLINE":
+            points = list(entity.get_points("xy"))
+            closed = bool(entity.closed)
+        elif entity_type == "POLYLINE":
+            points = list(entity.points())
+            closed = bool(entity.is_closed)
+        elif entity_type == "ARC":
+            try:
+                points = list(entity.flattening(50))
+            except Exception:
+                return []
+        else:
+            return []
+
+        coordinates = [(float(point[0]), float(point[1])) for point in points]
+        pairs = list(zip(coordinates, coordinates[1:]))
+        if closed and len(coordinates) > 2:
+            pairs.append((coordinates[-1], coordinates[0]))
+        return [
+            LineString((start, end))
+            for start, end in pairs
+            if math.dist(start, end) >= 20
+        ]
+
+    source_entities = list(iter_source_entities(msp))
+    furniture_block_paths = {
+        block_path
+        for _, raw_layer, effective_layer, block_path in source_entities
+        if block_path
+        and any(
+            token in f"{raw_layer}|{effective_layer}".lower()
+            for token in furniture_tokens
+        )
+    }
+
+    def belongs_to_mixed_furniture_block(block_path):
+        return any(
+            len(block_path) >= len(furniture_path)
+            and block_path[:len(furniture_path)] == furniture_path
+            for furniture_path in furniture_block_paths
+        )
+
+    segment_records = []
+    potential_door_guides = []
+    for entity, raw_layer, effective_layer, block_path in source_entities:
+        semantic_source = "|".join((*block_path, raw_layer, effective_layer)).lower()
+        if any(token in semantic_source for token in furniture_tokens):
+            continue
+        if any(token in semantic_source for token in annotation_tokens):
+            continue
+        opening_hint = any(token in semantic_source for token in opening_tokens)
+        wall_hint = any(token in semantic_source for token in wall_tokens)
+
+        if entity.dxftype() == "ARC":
+            try:
+                radius = float(entity.dxf.radius)
+                sweep = (float(entity.dxf.end_angle) - float(entity.dxf.start_angle)) % 360
+                center = (float(entity.dxf.center.x), float(entity.dxf.center.y))
+                start_point = (float(entity.start_point.x), float(entity.start_point.y))
+                end_point = (float(entity.end_point.x), float(entity.end_point.y))
+            except Exception:
+                radius = 0
+                sweep = 0
+                center = start_point = end_point = (0.0, 0.0)
+
+            if 350 <= radius <= 1800 and 25 <= sweep <= 135:
+                potential_door_guides.append({
+                    "center": center,
+                    "endpoints": (start_point, end_point),
+                    "radius": radius,
+                })
+                continue
+            if opening_hint or not wall_hint:
+                continue
+
+        if opening_hint:
+            continue
+        extracted = entity_segments(entity)
+        furniture_suspect = belongs_to_mixed_furniture_block(block_path)
+        segment_records.extend(
+            (effective_layer, segment, furniture_suspect)
+            for segment in extracted
+        )
+
+    def matches_door_leaf(segment, guide):
+        if not 0.75 * guide["radius"] <= segment.length <= 1.25 * guide["radius"]:
+            return False
+        coordinates = (segment.coords[0], segment.coords[-1])
+        tolerance = max(80.0, min(160.0, guide["radius"] * 0.1))
+        for hinge_index in (0, 1):
+            if math.dist(coordinates[hinge_index], guide["center"]) > tolerance:
+                continue
+            leaf_end = coordinates[1 - hinge_index]
+            if min(math.dist(leaf_end, endpoint) for endpoint in guide["endpoints"]) <= tolerance:
+                return True
+        return False
+
+    door_leaf_ids = set()
+    for guide in potential_door_guides:
+        matching_ids = {
+            id(segment)
+            for _, segment, _ in segment_records
+            if matches_door_leaf(segment, guide)
+        }
+        door_leaf_ids.update(matching_ids)
+
+    segments_by_layer = {}
+    furniture_suspect_ids = set()
+    for layer, segment, furniture_suspect in segment_records:
+        if id(segment) in door_leaf_ids:
+            continue
+        segments_by_layer.setdefault(layer, []).append(segment)
+        if furniture_suspect:
+            furniture_suspect_ids.add(id(segment))
+
+    if not segments_by_layer:
+        return []
+
+    preferred_layers = {
+        layer for layer in segments_by_layer
+        if layer == "0" or any(token in layer.lower() for token in wall_tokens)
+    }
+    eligible_layers = [
+        layer for layer in segments_by_layer
+        if not any(token in layer.lower() for token in auxiliary_tokens)
+    ]
+    eligible_layers.sort(
+        key=lambda layer: sum(segment.length for segment in segments_by_layer[layer]),
+        reverse=True,
+    )
+    preferred_segment_count = sum(len(segments_by_layer[layer]) for layer in preferred_layers)
+    selected_layers = (
+        preferred_layers
+        if preferred_segment_count >= 20
+        else preferred_layers | set(eligible_layers[:5])
+    )
+    linework = [
+        segment
+        for layer in selected_layers
+        for segment in segments_by_layer[layer]
+    ]
+    if len(linework) < 3:
+        return []
+
+    typical_length = median(segment.length for segment in linework)
+    snap_tolerance = max(20.0, min(150.0, typical_length * 0.02))
+    max_gap = 1200.0
+
+    network = unary_union(linework)
+    network = unary_union(snap(network, network, snap_tolerance))
+
+    def line_parts(geometry):
+        if geometry.geom_type == "LineString":
+            return [geometry]
+        if hasattr(geometry, "geoms"):
+            return [part for item in geometry.geoms for part in line_parts(item)]
+        return []
+
+    noded_lines = [line for line in line_parts(network) if line.length >= 20]
+
+    def endpoint_key(point):
+        return (
+            round(point[0] / snap_tolerance),
+            round(point[1] / snap_tolerance),
+        )
+
+    endpoint_counts = {}
+    endpoint_records = []
+    for line in noded_lines:
+        coordinates = list(line.coords)
+        for point, neighbor in ((coordinates[0], coordinates[1]), (coordinates[-1], coordinates[-2])):
+            key = endpoint_key(point)
+            endpoint_counts[key] = endpoint_counts.get(key, 0) + 1
+            inward_length = math.dist(point, neighbor)
+            if inward_length:
+                endpoint_records.append({
+                    "point": point,
+                    "key": key,
+                    "inward": (
+                        (neighbor[0] - point[0]) / inward_length,
+                        (neighbor[1] - point[1]) / inward_length,
+                    ),
+                })
+
+    dangling = [record for record in endpoint_records if endpoint_counts[record["key"]] == 1]
+    gap_candidates = []
+    for left_index, left in enumerate(dangling):
+        for right_index in range(left_index + 1, len(dangling)):
+            right = dangling[right_index]
+            distance = math.dist(left["point"], right["point"])
+            if distance < snap_tolerance or distance > max_gap:
+                continue
+            gap_direction = (
+                (right["point"][0] - left["point"][0]) / distance,
+                (right["point"][1] - left["point"][1]) / distance,
+            )
+            left_alignment = -sum(a * b for a, b in zip(left["inward"], gap_direction))
+            right_alignment = sum(a * b for a, b in zip(right["inward"], gap_direction))
+            if left_alignment >= 0.92 and right_alignment >= 0.92:
+                gap_candidates.append((distance, left_index, right_index))
+
+    repaired_endpoints = set()
+    repair_lines = []
+    for _, left_index, right_index in sorted(gap_candidates):
+        if left_index in repaired_endpoints or right_index in repaired_endpoints:
+            continue
+        repaired_endpoints.update((left_index, right_index))
+        repair_lines.append(LineString((dangling[left_index]["point"], dangling[right_index]["point"])))
+
+    repaired_network = unary_union([*noded_lines, *repair_lines])
+    raw_polygons = list(polygonize(repaired_network))
+    polygons = []
+    for polygon in raw_polygons:
+        if not polygon.is_valid or polygon.is_empty:
+            continue
+        if not 1_000_000 <= polygon.area <= 300_000_000:
+            continue
+        compactness = 4 * math.pi * polygon.area / max(polygon.length ** 2, 1)
+        if compactness < 0.015:
+            continue
+        polygons.append(polygon)
+
+    used_polygons = set()
+    result = []
+    repair_union = unary_union(repair_lines) if repair_lines else None
+    for room_label in room_labels:
+        exact_matches = [polygon for polygon in polygons if polygon.covers(room_label["pt"])]
+        matches = exact_matches or [
+            polygon for polygon in polygons
+            if polygon.distance(room_label["pt"]) <= snap_tolerance
+        ]
+        matches.sort(key=lambda polygon: polygon.area)
+        polygon = next((item for item in matches if item.wkb not in used_polygons), None)
+        if polygon is None:
+            continue
+        used_polygons.add(polygon.wkb)
+
+        min_x, min_y, max_x, max_y = polygon.bounds
+        vertices = [[float(x), float(y)] for x, y in list(polygon.exterior.coords)[:-1]]
+        repaired_boundary = bool(
+            repair_union is not None
+            and polygon.boundary.distance(repair_union) <= snap_tolerance
+        )
+        result.append({
+            "name": room_label["name"],
+            "area_sqm": round(polygon.area / 1_000_000, 2),
+            "perimeter_m": round(polygon.length / 1000, 2),
+            "vertices": vertices,
+            "boundary_source": "wall_topology_repaired" if repaired_boundary else "wall_topology",
+            "dimensions": {
+                "width_mm": round(max_x - min_x),
+                "height_mm": round(max_y - min_y),
+                "width_m": round((max_x - min_x) / 1000, 3),
+                "height_m": round((max_y - min_y) / 1000, 3),
+            },
+            "vertex_count": len(vertices),
+            "confidence": 0.72 if repaired_boundary else 0.82,
+        })
+
+    oriented_lines = {"horizontal": [], "vertical": []}
+    for index, line in enumerate(linework):
+        start, end = line.coords[0], line.coords[-1]
+        delta_x = abs(end[0] - start[0])
+        delta_y = abs(end[1] - start[1])
+        if delta_y <= max(3.0, delta_x * 0.02):
+            oriented_lines["horizontal"].append((index, line))
+        elif delta_x <= max(3.0, delta_y * 0.02):
+            oriented_lines["vertical"].append((index, line))
+
+    parallel_pairs = []
+    gap_counts = {}
+    for orientation, records in oriented_lines.items():
+        axis = 0 if orientation == "horizontal" else 1
+        fixed_axis = 1 - axis
+        for record_index, (left_index, left) in enumerate(records):
+            left_start, left_end = sorted((left.coords[0][axis], left.coords[-1][axis]))
+            left_fixed = left.coords[0][fixed_axis]
+            for right_index, right in records[record_index + 1:]:
+                gap = abs(left_fixed - right.coords[0][fixed_axis])
+                if not 80 <= gap <= 400:
+                    continue
+                right_start, right_end = sorted((right.coords[0][axis], right.coords[-1][axis]))
+                overlap = min(left_end, right_end) - max(left_start, right_start)
+                if overlap < min(left.length, right.length) * 0.4:
+                    continue
+                rounded_gap = round(gap / 10) * 10
+                gap_counts[rounded_gap] = gap_counts.get(rounded_gap, 0) + 1
+                parallel_pairs.append({
+                    "gap": gap,
+                    "left_index": left_index,
+                    "right_index": right_index,
+                    "left": left,
+                    "right": right,
+                    "orientation": orientation,
+                })
+
+    if not gap_counts:
+        return result
+
+    wall_thickness = max(gap_counts, key=gap_counts.get)
+    if gap_counts[wall_thickness] < 8:
+        return result
+
+    thickness_tolerance = max(30.0, wall_thickness * 0.25)
+    paired_indexes = {
+        line_index
+        for pair in parallel_pairs
+        if abs(pair["gap"] - wall_thickness) <= thickness_tolerance
+        for line_index in (pair["left_index"], pair["right_index"])
+    }
+    paired_lines = [line for index, line in enumerate(linework) if index in paired_indexes]
+    if len(paired_lines) < 8:
+        return result
+
+    def pair_wall_polygon(pair):
+        axis = 0 if pair["orientation"] == "horizontal" else 1
+        fixed_axis = 1 - axis
+        left = pair["left"]
+        right = pair["right"]
+        left_start, left_end = sorted((left.coords[0][axis], left.coords[-1][axis]))
+        right_start, right_end = sorted((right.coords[0][axis], right.coords[-1][axis]))
+        overlap_start = max(left_start, right_start)
+        overlap_end = min(left_end, right_end)
+        if overlap_end <= overlap_start:
+            return None
+        fixed_start, fixed_end = sorted((left.coords[0][fixed_axis], right.coords[0][fixed_axis]))
+        if pair["orientation"] == "horizontal":
+            return box(overlap_start, fixed_start, overlap_end, fixed_end)
+        return box(fixed_start, overlap_start, fixed_end, overlap_end)
+
+    confirmed_wall_pairs = [
+        pair for pair in parallel_pairs
+        if abs(pair["gap"] - wall_thickness) <= thickness_tolerance
+    ]
+    clean_confirmed_wall_pairs = [
+        pair for pair in confirmed_wall_pairs
+        if id(pair["left"]) not in furniture_suspect_ids
+        and id(pair["right"]) not in furniture_suspect_ids
+    ]
+    clean_paired_ids = {
+        id(line)
+        for pair in clean_confirmed_wall_pairs
+        for line in (pair["left"], pair["right"])
+    }
+    clean_paired_lines = [line for line in paired_lines if id(line) in clean_paired_ids]
+    if len(clean_paired_lines) < 8:
+        clean_paired_lines = paired_lines
+        clean_confirmed_wall_pairs = confirmed_wall_pairs
+    wall_polygons = [
+        polygon
+        for pair in clean_confirmed_wall_pairs
+        for polygon in [pair_wall_polygon(pair)]
+        if polygon is not None and polygon.area >= 20_000
+    ]
+
+    outer_candidates = []
+    for polygon in raw_polygons:
+        if not 20_000_000 <= polygon.area <= 1_000_000_000:
+            continue
+        contained_labels = sum(polygon.buffer(snap_tolerance).covers(label["pt"]) for label in room_labels)
+        if contained_labels >= 2:
+            outer_candidates.append((contained_labels, polygon.area, polygon))
+    if not outer_candidates:
+        return result
+
+    _, _, outer_polygon = max(outer_candidates, key=lambda item: (item[0], item[1]))
+    outer_polygon = type(outer_polygon)(outer_polygon.exterior)
+
+    def polygon_parts(geometry):
+        if geometry.geom_type == "Polygon":
+            return [geometry]
+        if hasattr(geometry, "geoms"):
+            return [part for item in geometry.geoms for part in polygon_parts(item)]
+        return []
+
+    def extend_line(start, end, extension):
+        length = math.dist(start, end)
+        if length == 0:
+            return None
+        unit_x = (end[0] - start[0]) / length
+        unit_y = (end[1] - start[1]) / length
+        return LineString((
+            (start[0] - unit_x * extension, start[1] - unit_y * extension),
+            (end[0] + unit_x * extension, end[1] + unit_y * extension),
+        ))
+
+    wall_solids = unary_union(wall_polygons) if wall_polygons else None
+
+    def build_door_separators():
+        if wall_solids is None or wall_solids.is_empty:
+            return []
+        separators = []
+        endpoint_tolerance = max(120.0, wall_thickness * 1.25)
+        for guide in potential_door_guides:
+            center_point = Point(guide["center"])
+            if wall_solids.distance(center_point) > endpoint_tolerance:
+                continue
+            ranked_endpoints = sorted(
+                guide["endpoints"],
+                key=lambda endpoint: wall_solids.distance(Point(endpoint)),
+            )
+            closed_endpoint = ranked_endpoints[0]
+            if wall_solids.distance(Point(closed_endpoint)) > endpoint_tolerance:
+                continue
+            separator = extend_line(
+                guide["center"],
+                closed_endpoint,
+                max(80.0, wall_thickness * 0.75),
+            )
+            if separator is not None:
+                separators.append(separator)
+
+        return separators
+
+    door_separators = build_door_separators()
+
+    def split_at_doors(polygons):
+        free_parts = polygons
+        for separator in door_separators:
+            split_parts = []
+            for polygon in free_parts:
+                try:
+                    pieces = polygon_parts(split(polygon, separator))
+                except Exception:
+                    pieces = [polygon]
+                split_parts.extend(pieces or [polygon])
+            free_parts = split_parts
+        return free_parts
+
+    def build_inner_face_result():
+        if wall_solids is None or wall_solids.is_empty:
+            return []
+
+        free_parts = split_at_doors(polygon_parts(outer_polygon.difference(wall_solids)))
+
+        spaces = []
+        for polygon in free_parts:
+            if not 1_000_000 <= polygon.area <= 100_000_000:
+                continue
+            matching_labels = [label for label in room_labels if polygon.covers(label["pt"])]
+            if len(matching_labels) != 1:
+                continue
+            compactness = 4 * math.pi * polygon.area / max(polygon.length ** 2, 1)
+            if compactness < 0.015:
+                continue
+            label = matching_labels[0]
+            min_x, min_y, max_x, max_y = polygon.bounds
+            vertices = [[float(x), float(y)] for x, y in list(polygon.exterior.coords)[:-1]]
+            separated_at_door = any(polygon.boundary.intersects(separator) for separator in door_separators)
+            spaces.append({
+                "name": label["name"],
+                "area_sqm": round(polygon.area / 1_000_000, 2),
+                "perimeter_m": round(polygon.length / 1000, 2),
+                "vertices": vertices,
+                "boundary_source": (
+                    "wall_inner_faces_door_split" if separated_at_door else "wall_inner_faces"
+                ),
+                "dimensions": {
+                    "width_mm": round(max_x - min_x),
+                    "height_mm": round(max_y - min_y),
+                    "width_m": round((max_x - min_x) / 1000, 3),
+                    "height_m": round((max_y - min_y) / 1000, 3),
+                },
+                "vertex_count": len(vertices),
+                "confidence": 0.8 if separated_at_door else 0.76,
+            })
+        return spaces
+
+    def build_mask_result(
+        mask_linework,
+        mask_paired_lines,
+        source,
+        closure_multiplier=3.0,
+        confidence=0.68,
+        use_label_envelope=False,
+        use_local_door_partition=False,
+    ):
+        if not mask_linework or not mask_paired_lines:
+            return []
+        wall_seed_width = max(40.0, wall_thickness * 0.55)
+        seed_mask = unary_union(mask_linework).buffer(
+            wall_seed_width,
+            cap_style="flat",
+            join_style="mitre",
+        )
+        seed_parts = list(seed_mask.geoms) if hasattr(seed_mask, "geoms") else [seed_mask]
+        paired_mask = unary_union(mask_paired_lines).buffer(
+            wall_thickness * 0.65,
+            cap_style="flat",
+            join_style="mitre",
+        )
+        wall_parts = [part for part in seed_parts if part.intersects(paired_mask)]
+        if not wall_parts:
+            return []
+        wall_mask = unary_union(wall_parts)
+        door_closure = (
+            max(60.0, min(180.0, wall_thickness * 0.75))
+            if use_local_door_partition
+            else max(400.0, min(1000.0, wall_thickness * closure_multiplier))
+        )
+        closed_walls = wall_mask.buffer(door_closure, join_style="mitre").buffer(
+            -door_closure,
+            join_style="mitre",
+        )
+        free_boundary = outer_polygon
+        if use_label_envelope:
+            label_x = [label["pt"].x for label in room_labels]
+            label_y = [label["pt"].y for label in room_labels]
+            margin = max(3000.0, wall_thickness * 15)
+            free_boundary = box(
+                min(label_x) - margin,
+                min(label_y) - margin,
+                max(label_x) + margin,
+                max(label_y) + margin,
+            )
+        free_space = free_boundary.difference(closed_walls)
+        free_parts = polygon_parts(free_space)
+        if use_local_door_partition:
+            free_parts = split_at_doors(free_parts)
+
+        candidate_parts = [
+            polygon for polygon in free_parts
+            if polygon.geom_type == "Polygon" and 1_000_000 <= polygon.area <= 100_000_000
+        ]
+        assignments = {}
+        assigned_label_ids = set()
+        ambiguous_label_ids = set()
+        for part_index, polygon in enumerate(candidate_parts):
+            matching_labels = [label for label in room_labels if polygon.covers(label["pt"])]
+            if len(matching_labels) == 1:
+                assignments[part_index] = (matching_labels[0], False)
+                assigned_label_ids.add(id(matching_labels[0]))
+            elif len(matching_labels) > 1:
+                ambiguous_label_ids.update(id(label) for label in matching_labels)
+
+        projection_limit = max(500.0, min(900.0, wall_thickness * 3.5))
+        projection_candidates = []
+        for label in room_labels:
+            if id(label) in assigned_label_ids or id(label) in ambiguous_label_ids:
+                continue
+            for part_index, polygon in enumerate(candidate_parts):
+                if part_index in assignments:
+                    continue
+                distance = polygon.distance(label["pt"])
+                if distance <= projection_limit:
+                    projection_candidates.append((distance, part_index, label))
+        for _, part_index, label in sorted(projection_candidates, key=lambda item: item[0]):
+            if part_index in assignments or id(label) in assigned_label_ids:
+                continue
+            assignments[part_index] = (label, True)
+            assigned_label_ids.add(id(label))
+
+        spaces = []
+        for part_index, (label, projected) in assignments.items():
+            polygon = candidate_parts[part_index]
+            inner_face_adjusted = False
+            if use_local_door_partition and wall_solids is not None and not wall_solids.is_empty:
+                expansion = max(40.0, wall_thickness * 0.55)
+                available_floor = free_boundary.difference(wall_solids)
+                adjusted_parts = polygon_parts(
+                    polygon.buffer(expansion, join_style="mitre").intersection(available_floor)
+                )
+                adjusted_matches = [part for part in adjusted_parts if part.covers(label["pt"])]
+                if adjusted_matches:
+                    polygon = max(adjusted_matches, key=lambda part: part.area)
+                    inner_face_adjusted = True
+            min_x, min_y, max_x, max_y = polygon.bounds
+            vertices = [[float(x), float(y)] for x, y in list(polygon.exterior.coords)[:-1]]
+            spaces.append({
+                "name": label["name"],
+                "area_sqm": round(polygon.area / 1_000_000, 2),
+                "perimeter_m": round(polygon.length / 1000, 2),
+                "vertices": vertices,
+                "boundary_source": (
+                    f"{source}_label_projected" if projected
+                    else f"{source}_inner_face_adjusted" if inner_face_adjusted
+                    else source
+                ),
+                "dimensions": {
+                    "width_mm": round(max_x - min_x),
+                    "height_mm": round(max_y - min_y),
+                    "width_m": round((max_x - min_x) / 1000, 3),
+                    "height_m": round((max_y - min_y) / 1000, 3),
+                },
+                "vertex_count": len(vertices),
+                "confidence": max(confidence - 0.06, 0.5) if projected else confidence,
+            })
+        return spaces
+
+    inner_face_result = build_inner_face_result()
+    primary_result = build_mask_result(
+        linework,
+        clean_paired_lines,
+        "wall_mask_repaired",
+        confidence=0.76,
+        use_local_door_partition=True,
+    )
+    legacy_primary_result = build_mask_result(
+        linework,
+        paired_lines,
+        "wall_mask_repaired",
+    )
+    zero_linework = segments_by_layer.get("0", [])
+    zero_keys = {line.wkb for line in zero_linework}
+    zero_paired_lines = [line for line in clean_paired_lines if line.wkb in zero_keys]
+    zero_result = build_mask_result(
+        zero_linework,
+        zero_paired_lines,
+        "wall_mask_layer0_repaired",
+        confidence=0.72,
+        use_local_door_partition=True,
+    )
+    strong_result = build_mask_result(
+        zero_linework,
+        zero_paired_lines,
+        "wall_mask_strong_repaired",
+        closure_multiplier=4.5,
+        confidence=0.58,
+    )
+    envelope_result = build_mask_result(
+        zero_linework,
+        zero_paired_lines,
+        "wall_mask_envelope_repaired",
+        closure_multiplier=4.5,
+        confidence=0.52,
+        use_label_envelope=True,
+    )
+
+    clean_names = {
+        space["name"]
+        for candidates in (
+            inner_face_result,
+            primary_result,
+            zero_result,
+            strong_result,
+            envelope_result,
+        )
+        for space in candidates
+    }
+    for space in legacy_primary_result:
+        if space["name"] not in clean_names:
+            space["boundary_source"] = "wall_mask_furniture_fallback"
+            space["confidence"] = min(space["confidence"], 0.5)
+
+    merged_result = {space["name"]: space for space in inner_face_result}
+    for space in [
+        *primary_result,
+        *legacy_primary_result,
+        *zero_result,
+        *strong_result,
+        *envelope_result,
+    ]:
+        merged_result.setdefault(space["name"], space)
+    mask_result = list(merged_result.values())
+    return mask_result if len(mask_result) > len(result) else result
+
+
+# 旧版尺寸推算保留作历史对照，不再进入自动解析流程。
+
+def _calc_rooms_from_lines_legacy(msp, room_labels, dimensions) -> list:
     """
     当DXF墙体用LINE线段绘制（无LWPOLYLINE闭合多边形）时，
     通过墙体线位置 + 尺寸标注值推算每个房间的近似尺寸和面积。
@@ -552,10 +1315,22 @@ def _calc_rooms_from_lines(msp, room_labels, dimensions) -> list:
             w_m = round(w_mm / 1000, 2)
             h_m = round(h_mm / 1000, 2)
             area = round(w_m * h_m, 2)
+            center_x = float(r["pt"].x)
+            center_y = float(r["pt"].y)
+            half_width = float(w_mm) / 2
+            half_height = float(h_mm) / 2
+            vertices = [
+                [center_x - half_width, center_y - half_height],
+                [center_x + half_width, center_y - half_height],
+                [center_x + half_width, center_y + half_height],
+                [center_x - half_width, center_y + half_height],
+            ]
             result.append({
                 "name": r["name"],
                 "area_sqm": area,
                 "perimeter_m": round(2 * (w_m + h_m), 2),
+                "vertices": vertices,
+                "boundary_source": "wall_dimension_estimate",
                 "dimensions": {"width_mm": round(w_mm), "height_mm": round(h_mm), "width_m": w_m, "height_m": h_m},
                 "vertex_count": 4, "confidence": 0.6,
             })

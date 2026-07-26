@@ -149,21 +149,13 @@
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
-            <CadUploader @file-change="onCadFileChange" @preview="onCadPreview" />
-            <!-- CAD预览 -->
-            <div v-if="cadPreviewUrl && uploadMode==='single'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
-              <p class="text-xs text-gray-500 mb-1">📐 CAD文件: {{ cadFile?.name }}</p>
-              <div v-if="cadSpaces.length > 0" class="grid grid-cols-3 gap-1 max-h-32 overflow-y-auto">
-                <div v-for="s in cadSpaces.slice(0, 15)" :key="s.name"
-                     class="text-[10px] bg-white rounded px-1.5 py-1 border border-gray-100">
-                  <span class="font-medium text-gray-700">{{ s.name }}</span>
-                  <span class="text-gray-400 ml-1">{{ s.area_sqm?.toFixed(1) }}㎡</span>
-                </div>
-                <div v-if="cadSpaces.length > 15" class="text-[10px] text-primary-600 rounded px-1.5 py-1 bg-primary-50">
-                  +{{ cadSpaces.length - 15 }} 个空间
-                </div>
-              </div>
-            </div>
+            <CadUploader
+              :review-hint="!!cadResult?.data?.needs_manual_review"
+              :review-reason="cadResult?.data?.manual_review_reason || ''"
+              :annotation-count="savedMeasurementResult?.space_count || 0"
+              @file-change="onCadFileChange"
+              @preview="openAnalysisPreview"
+            />
           </div>
           <div>
             <!-- 单张上传模式：图片 / PDF 二选一 -->
@@ -312,7 +304,17 @@
     <!-- 全屏 CAD 预览 -->
     <Teleport to="body">
       <div v-if="showCadPreview" class="cad-preview-overlay">
-        <CadViewer ref="cadViewerRef" :file="cadPreviewFile" @close="closeCadPreview" />
+        <DxfMeasurementPanel
+          v-if="cadMeasurementPreviewFile"
+          :active="true"
+          :embedded="true"
+          :initial-file="cadMeasurementPreviewFile"
+          :initial-spaces="savedMeasurementResult?.spaces || cadResult?.data?.spaces || []"
+          :review-reason="cadResult?.data?.manual_review_reason || ''"
+          @close="closeCadPreview"
+          @saved="onMeasurementSaved"
+        />
+        <CadViewer v-else ref="cadViewerRef" :file="cadPreviewFile" @close="closeCadPreview" />
       </div>
     </Teleport>
 
@@ -344,6 +346,8 @@ import VisionTestPanel from './components/VisionTestPanel.vue'
 import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
 import CadViewer from './components/CadViewer.vue'
+import DxfMeasurementPanel from './components/DxfMeasurementPanel.vue'
+import { canAnnotate } from './utils/annotationCapabilities.js'
 
 const tabs = [
   { key: 'home', label: '📐 图纸分析' },
@@ -395,13 +399,12 @@ function setStepDone(text, duration = '') {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 // 文件预览
-const cadPreviewUrl = ref('')
 const imagePreviewUrl = ref('')
-const cadSpaces = ref([])
-
 // CAD 图纸预览（全屏）
 const showCadPreview = ref(false)
 const cadPreviewFile = ref(null)
+const cadMeasurementPreviewFile = ref(null)
+const savedMeasurementResult = ref(null)
 const cadViewerRef = ref(null)
 
 // ⏳ 启动加载
@@ -522,12 +525,7 @@ const sysStatusText = computed(() => {
 function onCadFileChange(f) {
   cadFile.value = f
   cadDone.value = !!f
-  if (f) {
-    cadPreviewUrl.value = f.name // 标记已上传
-  } else {
-    cadPreviewUrl.value = ''
-    cadSpaces.value = []
-  }
+  savedMeasurementResult.value = null
 }
 function onImageFileChange(f) {
   imageFile.value = f
@@ -555,9 +553,8 @@ async function clearFiles() {
   imageFile.value = null
   cadResult.value = null
   imageResult.value = null
-  cadPreviewUrl.value = ''
   imagePreviewUrl.value = ''
-  cadSpaces.value = []
+  savedMeasurementResult.value = null
   cadDone.value = false
   imgDone.value = false
   analysisDone.value = false
@@ -565,7 +562,14 @@ async function clearFiles() {
 }
 
 // CAD 图纸预览
+function openAnalysisPreview() {
+  if (!canAnnotate(cadFile.value)) return
+  cadMeasurementPreviewFile.value = cadFile.value
+  cadPreviewFile.value = null
+  showCadPreview.value = true
+}
 function onCadPreview(fileData) {
+  cadMeasurementPreviewFile.value = null
   cadPreviewFile.value = fileData
   showCadPreview.value = true
 }
@@ -574,6 +578,12 @@ function closeCadPreview() {
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
   showCadPreview.value = false
   cadPreviewFile.value = null
+  cadMeasurementPreviewFile.value = null
+}
+function onMeasurementSaved(result) {
+  savedMeasurementResult.value = result
+  analysisDone.value = false
+  closeCadPreview()
 }
 
 async function startAnalysis() {
@@ -591,7 +601,11 @@ async function startAnalysis() {
     await sleep(100)
 
     const t0 = Date.now()
-    cadResult.value = await API.analyzeCad(cadFile.value, projectName.value)
+    cadResult.value = await API.analyzeCad(
+      cadFile.value,
+      projectName.value,
+      savedMeasurementResult.value?.measurement_id || null,
+    )
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
     setStepDone('📤 上传CAD文件...', dur)
 
@@ -603,10 +617,6 @@ async function startAnalysis() {
       setStepDone('📐 计算面积和工程量...', '失败')
     }
 
-    // 解析成功后填充CAD空间预览
-    if (cadResult.value?.data?.spaces) {
-      cadSpaces.value = cadResult.value.data.spaces
-    }
   }
 
   if (imageFile.value) {

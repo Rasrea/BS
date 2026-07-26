@@ -8,7 +8,9 @@ FastAPI 主服务 - 家装智能自动报价系统（首期工程化版）
 5. 全局任务状态机 + 异步锁 + 三层门禁
 """
 import os
+import shutil
 import uuid
+import hashlib
 from collections import OrderedDict
 import json
 import asyncio
@@ -29,6 +31,12 @@ from dotenv import load_dotenv
 load_dotenv()
 import logging
 from cad_parser import parse_cad_file
+from dxf_measurement import (
+    DxfMeasurementRequest,
+    calculate_room_measurements,
+    load_dxf_measurement_view,
+    prepare_dxf_for_measurement,
+)
 from image_recognizer import recognize_with_fallback
 from quantity_estimator import estimate_quantities
 from fusion_validator import merge_dxf_and_vl
@@ -161,6 +169,22 @@ def err(code: int, message: str, data=None, task_status=None, trace_id="") -> di
 ALLOWED_CAD_EXT = {".dxf", ".dwg", ".pdf"}
 ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"}
 ALLOWED_PDF_EXT = {".pdf"}
+MANUAL_ANNOTATION_CAPABILITIES = {
+    "dxf": {
+        "enabled": True,
+        "label": "DXF",
+        "background_type": "vector",
+        "requires_calibration": False,
+        "unavailable_reason": "",
+    },
+    "pdf": {
+        "enabled": False,
+        "label": "PDF",
+        "background_type": "page",
+        "requires_calibration": True,
+        "unavailable_reason": "PDF 人工标注尚未实现，后续需增加页面渲染、页码选择和比例校准",
+    },
+}
 MAX_CAD_SIZE = 120 * 1024 * 1024   # 120MB
 MAX_IMG_SIZE = 10 * 1024 * 1024    # 10MB
 MAX_PDF_SIZE = 50 * 1024 * 1024    # 50MB
@@ -182,6 +206,72 @@ async def check_file_gate(file: UploadFile, max_size: int, allowed_ext: set, fil
         raise HTTPException(status_code=413, detail=f"文件过大：{file_type}最大{max_size//1024//1024}MB")
     await file.seek(0)
     return content, ext
+
+
+def annotation_capability(source_format: str, require_enabled: bool = True) -> dict:
+    normalized = str(source_format or "").lower().lstrip(".")
+    capability = MANUAL_ANNOTATION_CAPABILITIES.get(normalized)
+    if not capability:
+        raise HTTPException(status_code=415, detail=f"{normalized or '该格式'}不支持人工标注")
+    if require_enabled and not capability["enabled"]:
+        raise HTTPException(status_code=415, detail=capability["unavailable_reason"])
+    return {"format": normalized, **capability}
+
+
+def measurement_file_path(drawing_id: str, source_format: str = "dxf") -> Path:
+    if not drawing_id or any(char not in "0123456789abcdef" for char in drawing_id.lower()):
+        raise HTTPException(status_code=400, detail="无效的测量图纸编号")
+    capability = annotation_capability(source_format)
+    return UPLOAD_DIR / f"{drawing_id}_measure.{capability['format']}"
+
+
+def resolve_measurement_file(drawing_id: str) -> tuple[Path, str]:
+    for source_format, capability in MANUAL_ANNOTATION_CAPABILITIES.items():
+        if not capability["enabled"]:
+            continue
+        path = measurement_file_path(drawing_id, source_format)
+        if path.is_file():
+            return path, source_format
+    raise HTTPException(status_code=404, detail="测量图纸不存在或已清理，请重新上传")
+
+
+def measurement_result_path(drawing_id: str) -> Path:
+    if not drawing_id or any(char not in "0123456789abcdef" for char in drawing_id.lower()):
+        raise HTTPException(status_code=400, detail="无效的测量图纸编号")
+    return UPLOAD_DIR / f"{drawing_id}_measurement.json"
+
+
+def file_sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def load_saved_measurement(drawing_id: str, source_content: bytes) -> dict:
+    result_path = measurement_result_path(drawing_id)
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="保存的人工面积结果不存在，请重新标注")
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="保存的人工面积结果无法读取，请重新标注") from exc
+    if result.get("source_file_hash") != file_sha256(source_content):
+        raise HTTPException(status_code=409, detail="人工面积结果与当前图纸不匹配，请重新标注")
+    if not result.get("spaces"):
+        raise HTTPException(status_code=422, detail="保存的人工面积结果为空，请重新标注")
+    return result
+
+
+def prepare_measurement_source(source_format: str, file_path: str) -> dict:
+    annotation_capability(source_format)
+    if source_format == "dxf":
+        return prepare_dxf_for_measurement(file_path)
+    raise HTTPException(status_code=501, detail=f"{source_format.upper()} 人工标注准备器尚未实现")
+
+
+def calculate_measurement_source(payload: DxfMeasurementRequest, file_path: str) -> dict:
+    annotation_capability(payload.source_format)
+    if payload.source_format == "dxf":
+        return calculate_room_measurements(payload, file_path)
+    raise HTTPException(status_code=501, detail=f"{payload.source_format.upper()} 人工测量计算器尚未实现")
 
 
 async def require_idle(task_type: str):
@@ -301,8 +391,8 @@ async def get_health():
     if not upload_ok:
         issues.append("上传目录异常")
     # 磁盘空间
-    st = os.statvfs(str(EXPORT_DIR))
-    free_gb = st.f_frsize * st.f_bavail / 1024 / 1024 / 1024
+    _, _, free_bytes = shutil.disk_usage(EXPORT_DIR)
+    free_gb = free_bytes / 1024 / 1024 / 1024
     if free_gb < 1:
         issues.append(f"磁盘空间不足（剩余{free_gb:.1f}GB）")
 
@@ -316,6 +406,186 @@ async def get_health():
     })
 
 
+# ─────────────────── 接口：人工标注测量 ───────────────────
+
+@app.get("/api/measurement/capabilities")
+async def get_measurement_capabilities():
+    """返回人工标注格式能力；未启用格式用于前端提示和后续扩展。"""
+    return ok({"formats": [
+        {"format": source_format, **capability}
+        for source_format, capability in MANUAL_ANNOTATION_CAPABILITIES.items()
+    ]})
+
+
+async def prepare_measurement_file(source_file: UploadFile):
+    source_format = Path(source_file.filename).suffix.lower().lstrip(".")
+    capability = annotation_capability(source_format)
+    content, _ = await check_file_gate(
+        source_file,
+        MAX_CAD_SIZE,
+        {f".{source_format}"},
+        capability["label"],
+    )
+    drawing_id = uuid.uuid4().hex[:16]
+    save_path = measurement_file_path(drawing_id, source_format)
+    save_path.write_bytes(content)
+
+    data, trace_id, error = await safe_run(
+        "cad", TIMEOUT_CAD, prepare_measurement_source, source_format, str(save_path)
+    )
+    if error:
+        save_path.unlink(missing_ok=True)
+        return err(500, f"{capability['label']} 测量底图准备失败: {error}", task_status=STATE_IDLE)
+    if not data or data.get("error"):
+        save_path.unlink(missing_ok=True)
+        return err(400, (data or {}).get("error", "图纸中没有可测量内容"), task_status=STATE_IDLE)
+
+    data.update({
+        "drawing_id": drawing_id,
+        "filename": source_file.filename,
+        "source_format": source_format,
+        "annotation_capability": capability,
+    })
+    return ok(data, message="测量底图已准备", task_status=STATE_IDLE, trace_id=trace_id)
+
+
+@app.post("/api/measurement/prepare")
+async def prepare_manual_measurement(source_file: UploadFile = File(...)):
+    return await prepare_measurement_file(source_file)
+
+
+@app.post("/api/dxf/measurement/prepare", deprecated=True)
+async def prepare_dxf_measurement(dxf_file: UploadFile = File(...)):
+    return await prepare_measurement_file(dxf_file)
+
+
+async def load_measurement_view(drawing_id: str, view_id: str):
+    """按需加载已检测到的单个图纸区域。"""
+    save_path, source_format = resolve_measurement_file(drawing_id)
+    try:
+        loop = asyncio.get_event_loop()
+        if source_format == "dxf":
+            data = await loop.run_in_executor(None, load_dxf_measurement_view, str(save_path), view_id)
+        else:
+            raise HTTPException(status_code=501, detail=f"{source_format.upper()} 分页视图加载器尚未实现")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("DXF measurement view loading failed")
+        raise HTTPException(status_code=500, detail=f"图纸区域加载失败: {exc}") from exc
+    data.update({"drawing_id": drawing_id, "source_format": source_format})
+    return ok(data, message="图纸区域加载完成", task_status=STATE_IDLE)
+
+
+@app.get("/api/measurement/{drawing_id}/views/{view_id}")
+async def get_measurement_view(drawing_id: str, view_id: str):
+    return await load_measurement_view(drawing_id, view_id)
+
+
+@app.get("/api/dxf/measurement/{drawing_id}/views/{view_id}", deprecated=True)
+async def get_dxf_measurement_view(drawing_id: str, view_id: str):
+    return await load_measurement_view(drawing_id, view_id)
+
+
+async def calculate_manual_measurement(payload: DxfMeasurementRequest):
+    """校验人工标注边界，并在服务端计算面积、周长和旋转包围尺寸。"""
+    save_path = measurement_file_path(payload.drawing_id, payload.source_format)
+    try:
+        data = calculate_measurement_source(payload, str(save_path))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("DXF manual measurement failed")
+        raise HTTPException(status_code=500, detail=f"DXF 测量计算失败: {exc}") from exc
+    return ok(data, message="房间测量完成", task_status=STATE_IDLE)
+
+
+@app.post("/api/measurement/calculate")
+async def calculate_measurement(payload: DxfMeasurementRequest):
+    return await calculate_manual_measurement(payload)
+
+
+@app.post("/api/dxf/measurement/calculate", deprecated=True)
+async def calculate_dxf_measurement(payload: DxfMeasurementRequest):
+    return await calculate_manual_measurement(payload)
+
+
+async def save_measurement_result(payload: DxfMeasurementRequest):
+    save_path = measurement_file_path(payload.drawing_id, payload.source_format)
+    try:
+        measurement = calculate_measurement_source(payload, str(save_path))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("DXF measurement saving failed")
+        raise HTTPException(status_code=500, detail=f"DXF 面积结果保存失败: {exc}") from exc
+
+    invalid_rooms = [room for room in measurement["rooms"] if not room["valid"]]
+    if invalid_rooms:
+        details = "; ".join(
+            f"{room['name']}: {', '.join(room['errors'])}"
+            for room in invalid_rooms[:5]
+        )
+        raise HTTPException(status_code=400, detail=f"存在无效区域，无法保存: {details}")
+
+    spaces = []
+    for room in measurement["rooms"]:
+        spaces.append({
+            "client_id": room["client_id"],
+            "name": room["name"],
+            "area_sqm": room["area_sqm"],
+            "perimeter_m": room["perimeter_m"],
+            "vertices": room["vertices"],
+            "dimensions": room["dimensions"],
+            "vertex_count": len(room["vertices"]),
+            "confidence": 1.0,
+            "boundary_source": "manual_annotation",
+            "measurement_source": "manual_annotation",
+            "valid": True,
+            "errors": [],
+            "warnings": room["warnings"],
+        })
+
+    total_area = sum(space["area_sqm"] for space in spaces)
+    result = {
+        "measurement_id": payload.drawing_id,
+        "source_format": payload.source_format,
+        "source_file_hash": file_sha256(save_path.read_bytes()),
+        "saved_at": datetime.now().isoformat(),
+        "spaces": spaces,
+        "space_count": len(spaces),
+        "total_area": round(total_area, 2),
+        "unit": measurement["unit"],
+        "mm_per_unit": measurement["mm_per_unit"],
+        "unit_source": measurement["unit_source"],
+    }
+    result_path = measurement_result_path(payload.drawing_id)
+    temp_path = result_path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    temp_path.replace(result_path)
+    return result
+
+
+@app.post("/api/measurement/save")
+async def save_dxf_measurement(payload: DxfMeasurementRequest):
+    """校验并保存人工面积结果，不执行计价或覆盖正式分析记录。"""
+    result = await save_measurement_result(payload)
+    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+
+
+@app.post("/api/dxf/measurement/save", deprecated=True)
+async def save_legacy_dxf_measurement(payload: DxfMeasurementRequest):
+    result = await save_measurement_result(payload)
+    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+
+
+@app.post("/api/dxf/measurement/apply", deprecated=True)
+async def apply_dxf_measurement(payload: DxfMeasurementRequest):
+    """兼容旧客户端；仅保存面积结果，不再执行计价。"""
+    result = await save_measurement_result(payload)
+    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+
+
 # ─────────────────── 接口：CAD解析+报价（接口1） ───────────────────
 
 @app.post("/api/analyze_full")
@@ -323,6 +593,7 @@ async def analyze_full(
     cad_file: UploadFile = File(None),
     quote_db: str = Form(None),
     project_name: str = Form("装修工程"),
+    measurement_id: str = Form(None),
 ):
     """
     接口1：CAD 文件解析 + 报价
@@ -344,8 +615,30 @@ async def analyze_full(
     save_path = UPLOAD_DIR / f"{task_id}_cad{ext}"
     save_path.write_bytes(content)
 
+    error = None
+    tid = ""
+    saved_measurement = None
+    if measurement_id:
+        source_format = ext.lstrip(".")
+        annotation_capability(source_format)
+        saved_measurement = load_saved_measurement(measurement_id, content)
+        if saved_measurement.get("source_format", "dxf") != source_format:
+            raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
+
+    if saved_measurement:
+        data = {
+            "spaces": saved_measurement["spaces"],
+            "parse_method": "人工标注面积",
+            "needs_manual_review": False,
+            "manual_review_reason": "",
+            "dxf_repair_count": 0,
+            "measurement_id": measurement_id,
+            "source_format": source_format,
+        }
+        tid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
+
     # PDF 路径：矢量解析（优先）+ 视觉识别（回退）
-    if ext == ".pdf":
+    elif ext == ".pdf":
         from pdf_parser import parse_pdf_vector
         from cad_parser import _parse_cad_pdf
 
@@ -378,7 +671,27 @@ async def analyze_full(
     # 计算报价
     spaces = data.get("spaces", data.get("data", []))
     if not spaces:
-        return ok({"spaces": [], "base_price": 0, "total_area": 0, "space_count": 0})
+        drawing_id = await db.add_drawing(cad_file.filename, str(save_path), len(content))
+        await db.update_drawing_parse(
+            drawing_id,
+            "needs_review",
+            {"spaces_count": 0, "total_area": 0},
+        )
+        return ok({
+            "drawing_id": drawing_id,
+            "spaces": [],
+            "base_price": 0,
+            "total_area": 0,
+            "space_count": 0,
+            "parse_method": data.get("parse_method", ""),
+            "needs_manual_review": data.get("needs_manual_review", True),
+            "manual_review_reason": data.get(
+                "manual_review_reason",
+                "未识别到可靠房间边界，请进入人工测量补画",
+            ),
+            "dxf_repair_count": data.get("dxf_repair_count", 0),
+            "source_format": ext.lstrip("."),
+        })
 
     total_area = sum(s.get("area", s.get("area_sqm", 0)) for s in spaces)
 
@@ -413,6 +726,12 @@ async def analyze_full(
         "tax_fee": round(tax_fee, 2),
         "final_price": round(final_price, 2),
         "project_name": project_name,
+        "parse_method": data.get("parse_method", ""),
+        "needs_manual_review": data.get("needs_manual_review", False),
+        "manual_review_reason": data.get("manual_review_reason", ""),
+        "dxf_repair_count": data.get("dxf_repair_count", 0),
+        "measurement_id": data.get("measurement_id"),
+        "source_format": data.get("source_format", ext.lstrip(".")),
     }
 
     return ok(result, task_status=STATE_IDLE, trace_id=tid)
@@ -429,6 +748,10 @@ async def upload_clear():
     now = time.time()
     deleted = 0
     for f in UPLOAD_DIR.iterdir():
+        if f.is_file() and (f.name.endswith('_measurement.json') or f.name.endswith('_measurement.tmp')):
+            f.unlink(missing_ok=True)
+            deleted += 1
+            continue
         if f.is_file() and f.suffix.lower() in ('.dxf', '.dwg', '.jpg', '.jpeg', '.png', '.webp'):
             fname = f.name
             # 只删文件名不含数据库记录ID标记的临时文件（上传但未解析的）
@@ -555,7 +878,6 @@ async def analyze_image(
 
 
 # ─────────────────── 接口：视觉识别独立测试（诊断用） ───────────────────
-@app.post("/api/vision_test")
 @app.post("/api/vision_test")
 async def vision_test(
     image_file: UploadFile = File(None),
