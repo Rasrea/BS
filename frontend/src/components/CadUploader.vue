@@ -29,7 +29,9 @@
       <p class="text-sm font-medium text-green-700 break-all">{{ file.name }}</p>
       <p class="text-xs text-gray-400 mt-1">{{ formatSize(file.size) }}</p>
       <div class="flex items-center gap-2 mt-2">
-        <button v-if="file.name.toLowerCase().endsWith('.dxf')" class="preview-btn" @click.stop="preview">🔍 预览</button>
+        <button v-if="canAnnotate(file)" class="preview-btn" @click.stop="preview">标注</button>
+        <span v-if="annotationCount" class="annotation-saved">已保存 {{ annotationCount }} 个区域</span>
+        <span v-if="reviewHint" class="review-hint" :title="reviewReason || '建议核对自动识别区域'">建议人工复核</span>
         <button class="text-xs text-red-500 hover:text-red-700 underline" @click.stop="remove">移除</button>
       </div>
     </template>
@@ -38,6 +40,12 @@
 
 <script setup>
 import { ref } from 'vue'
+import { canAnnotate } from '../utils/annotationCapabilities.js'
+defineProps({
+  reviewHint: { type: Boolean, default: false },
+  reviewReason: { type: String, default: '' },
+  annotationCount: { type: Number, default: 0 },
+})
 const emit = defineEmits(['file-change', 'preview'])
 const file = ref(null)
 const dragging = ref(false)
@@ -91,6 +99,16 @@ style.textContent = `
     background: linear-gradient(135deg, #4f46e5, #7c3aed);
     transform: translateY(-1px);
     box-shadow: 0 4px 14px rgba(99,102,241,0.35);
+  }
+  .review-hint {
+    color: #a16207;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .annotation-saved {
+    color: #047857;
+    font-size: 11px;
+    font-weight: 600;
   }
 `
 document.head.appendChild(style)

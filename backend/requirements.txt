@@ -8,4 +8,5 @@ Pillow==11.1.0
 shapely==2.0.6
 numpy==2.2.1
 aiofiles==24.1.0
+aiosqlite==0.22.1
 PyMuPDF==1.25.4

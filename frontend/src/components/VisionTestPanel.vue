@@ -276,7 +276,12 @@
               <span class="text-xs font-medium text-gray-700 truncate">{{ f.name }}</span>
               <span class="text-[10px] text-gray-400">{{ f.file ? (f.file.size / 1024).toFixed(1) + ' KB' : '' }}</span>
               <span v-if="isDxfFile(f.name)" class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded">可预览</span>
-              <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值 {{ f.groundTruth }}</span>            </div>
+              <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值</span>
+              <span v-if="f.measurementId" 
+                    class="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded">
+                ✏️ 已标注
+              </span>
+            </div>
             <div class="flex items-center gap-2">
               <label v-if="!f.groundTruth" class="cursor-pointer text-[10px] px-2 py-1 bg-green-100 text-green-600 rounded hover:bg-green-200 transition-colors">
                 📋 上传真实值
@@ -288,9 +293,9 @@
               <button 
                 v-if="isDxfFile(f.name)"
                 class="text-[10px] px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 transition-colors"
-                @click="previewCadFile(f.name)"
+                @click="annotateCadFile(f)"
               >
-                🔍 预览图纸
+                ✏️ 人工标注
               </button>
               <span v-else class="text-[10px] text-gray-400">仅支持DXF预览</span>
             </div>
@@ -636,7 +641,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import API from '../services/api.js'
-const emit = defineEmits(['cad-preview'])  // cad预览按钮
+const emit = defineEmits(['cad-preview', 'cad-annotate'])  // cad标注按钮
 
 const files = ref([])
 const testing = ref(false)
@@ -1150,6 +1155,7 @@ function onCadFilesChange(e) {
     testing: false,
     groundTruth: null,
     groundTruthData: null,
+    measurementId: null,   // ← 新增：人工标注的 drawing_id
   }))
   cadResults.value = []
   e.target.value = ''
@@ -1166,23 +1172,19 @@ function isDxfFile(filename) {
   return filename.toLowerCase().endsWith('.dxf')
 }
 
-// 预览 CAD 图纸
-function previewCadFile(filename) {
-  const cadFileObj = cadFiles.value.find(f => f.name === filename)
-  if (!cadFileObj || !cadFileObj.file) {
-    alert('找不到文件数据')
-    return
-  }
-
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    emit('cad-preview', {
-      name: cadFileObj.file.name,
-      buffer: e.target.result
-    })
-  }
-  reader.readAsArrayBuffer(cadFileObj.file)
+// 人工标注 CAD 图纸
+function annotateCadFile(cadFileObj) {
+  if (!cadFileObj || !cadFileObj.file) return
+  emit('cad-annotate', {
+    file: cadFileObj.file,
+    filename: cadFileObj.name,
+    callback: (drawingId) => {
+      cadFileObj.measurementId = drawingId
+      cadFileObj.hasAnnotation = true
+    }
+  })
 }
+
 
 // 真实值 JSON 处理（单个 CAD 文件关联）
 function onGroundTruthFileChange(e, cadIndex) {
@@ -1262,8 +1264,13 @@ async function startCadBatchTest() {
     
     const fd = new FormData()
     fd.append('cad_file', f.file)
-    fd.append('project_name', '视觉测试工程')
+    fd.append('project_name', 'CAD 测试工程')
     
+    // 如果该文件有已保存的人工标注，传递 measurement_id
+    if (f.measurementId) {
+      fd.append('measurement_id', f.measurementId)
+    }
+
     try {
       const res = await API.post('/analyze_full', fd, { timeout: 120000 })
       

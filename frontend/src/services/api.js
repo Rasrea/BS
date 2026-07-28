@@ -23,12 +23,47 @@ export const API = {
   },
 
   // === CAD解析 (接口1) ===
-  async analyzeCad(file, projectName = '装修工程') {
+  async analyzeCad(file, projectName = '装修工程', measurementId = null) {
     try {
       const fd = new FormData()
       fd.append('cad_file', file)
       if (projectName) fd.append('project_name', projectName)
+      if (measurementId) fd.append('measurement_id', measurementId)
       const { data } = await api.post('/analyze_full', fd, { timeout: 120000 })
+      return data
+    } catch (e) { return handleError(e) }
+  },
+
+  // === 人工标注测量 ===
+  async prepareMeasurement(file) {
+    try {
+      const fd = new FormData()
+      fd.append('source_file', file)
+      const { data } = await api.post('/measurement/prepare', fd, { timeout: 120000 })
+      return data
+    } catch (e) { return handleError(e) }
+  },
+    async calculateMeasurement(drawingId, sourceFormat, rooms, unitOverride = null, calibration = null) {
+    try {
+      const payload = { drawing_id: drawingId, source_format: sourceFormat, rooms }
+      if (unitOverride) payload.unit_override = unitOverride
+      if (calibration) payload.calibration = calibration
+      const { data } = await api.post('/measurement/calculate', payload, { timeout: 60000 })
+      return data
+      } catch (e) { return handleError(e) }
+    },
+    async saveMeasurement(drawingId, sourceFormat, rooms, unitOverride = null, calibration = null) {
+      try {
+        const payload = { drawing_id: drawingId, source_format: sourceFormat, rooms }
+        if (unitOverride) payload.unit_override = unitOverride
+        if (calibration) payload.calibration = calibration
+        const { data } = await api.post('/measurement/save', payload, { timeout: 60000 })
+        return data
+      } catch (e) { return handleError(e) }
+    },
+  async getMeasurementView(drawingId, viewId) {
+    try {
+      const { data } = await api.get(`/measurement/${drawingId}/views/${encodeURIComponent(viewId)}`, { timeout: 60000 })
       return data
     } catch (e) { return handleError(e) }
   },
