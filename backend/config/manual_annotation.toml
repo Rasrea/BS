@@ -1,0 +1,32 @@
+# 本文件为人工标注相应格式的能力配置。修改后会在下一次请求时生效，无需重启服务。
+#
+#选项解释
+# calibration_policy 可选值：
+# none              禁止手动校准
+# optional          手动校准可选
+# when_unit_unknown 图纸单位未知时，必须手动校准或明确指定单位
+# required          无论图纸是否声明单位，都必须完成手动校准
+#
+#属性解释
+# enabled             是否开放该格式的人工标注功能
+# label               前端显示的格式名称
+# background_type     底图类型：vector 为矢量底图，page 为分页底图
+# allow_unit_override 是否允许用户手动指定图纸单位
+# default_unit        可选默认单位：mm、cm、m、in、ft；无需默认单位时请省略
+# unavailable_reason  功能关闭时显示给用户的原因
+
+[dxf]
+enabled = true
+label = "DXF"
+background_type = "vector"
+calibration_policy = "when_unit_unknown"
+allow_unit_override = true
+unavailable_reason = ""
+
+[pdf]
+enabled = false
+label = "PDF"
+background_type = "page"
+calibration_policy = "required"
+allow_unit_override = false
+unavailable_reason = "PDF 人工标注尚未实现，后续需增加页面渲染、页码选择和比例校准"

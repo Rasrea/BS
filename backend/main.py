@@ -15,6 +15,7 @@ from collections import OrderedDict
 import json
 import asyncio
 import time
+import tomllib
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -169,23 +170,8 @@ def err(code: int, message: str, data=None, task_status=None, trace_id="") -> di
 ALLOWED_CAD_EXT = {".dxf", ".dwg", ".pdf"}
 ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"}
 ALLOWED_PDF_EXT = {".pdf"}
-MANUAL_ANNOTATION_CAPABILITIES = {
-    "dxf": {
-        "enabled": True,               # 启用状态：已启用
-        "label": "DXF",                # 显示标签："DXF"
-        "background_type": "vector",   # 背景类型：矢量图
-        "requires_calibration": False, # 是否需要校准：不需要
-        "unavailable_reason": "",      # 不可用原因：空（因为已启用）
-    },
-    "pdf": {
-        "enabled": False,             # 启用状态：未启用
-        "label": "PDF",               # 显示标签："PDF"
-        "background_type": "page",    # 背景类型：页面
-        "requires_calibration": True, # 是否需要校准：需要
-        "unavailable_reason": "PDF 人工标注尚未实现，后续需增加页面渲染、页码选择和比例校准",
-        # 不可用原因：功能尚未实现，需要后续开发
-    },
-}
+MANUAL_ANNOTATION_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "manual_annotation.toml"
+CALIBRATION_POLICIES = {"none", "optional", "when_unit_unknown", "required"}
 MAX_CAD_SIZE = 120 * 1024 * 1024   # 120MB
 MAX_IMG_SIZE = 10 * 1024 * 1024    # 10MB
 MAX_PDF_SIZE = 50 * 1024 * 1024    # 50MB
@@ -209,6 +195,38 @@ async def check_file_gate(file: UploadFile, max_size: int, allowed_ext: set, fil
     return content, ext
 
 
+def load_annotation_capabilities() -> dict:
+    """每次请求读取能力配置，使运维修改 TOML 后无需重启服务。"""
+    try:
+        with MANUAL_ANNOTATION_CONFIG_PATH.open("rb") as config_file:
+            capabilities = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise RuntimeError(f"人工标注能力配置读取失败: {exc}") from exc
+
+    if not isinstance(capabilities, dict) or not capabilities:
+        raise RuntimeError("人工标注能力配置必须是非空对象")
+    required_fields = {
+        "enabled": bool,
+        "label": str,
+        "background_type": str,
+        "calibration_policy": str,
+        "allow_unit_override": bool,
+        "unavailable_reason": str,
+    }
+    for source_format, capability in capabilities.items():
+        if not isinstance(capability, dict):
+            raise RuntimeError(f"{source_format} 人工标注能力配置必须是对象")
+        for field, field_type in required_fields.items():
+            if not isinstance(capability.get(field), field_type):
+                raise RuntimeError(f"{source_format} 配置项 {field} 类型无效")
+        if capability["calibration_policy"] not in CALIBRATION_POLICIES:
+            raise RuntimeError(f"{source_format} 的 calibration_policy 不受支持")
+        default_unit = capability.get("default_unit")
+        if default_unit is not None and default_unit not in {"mm", "cm", "m", "in", "ft"}:
+            raise RuntimeError(f"{source_format} 的 default_unit 不受支持")
+    return capabilities
+
+
 def annotation_capability(source_format: str, require_enabled: bool = True) -> dict:
     """
     获取指定文件格式的人工标注能力配置。
@@ -224,12 +242,13 @@ def annotation_capability(source_format: str, require_enabled: bool = True) -> d
             - enabled (bool): 该格式是否已启用
             - label (str): 格式的显示标签
             - background_type (str): 标注背景类型
-            - requires_calibration (bool): 是否需要校准
+            - calibration_policy (str): 校准策略
+            - allow_unit_override (bool): 是否允许手动指定单位
             - unavailable_reason (str): 不可用原因说明（仅在未启用时有意义）
     """
     
     normalized = str(source_format or "").lower().lstrip(".")
-    capability = MANUAL_ANNOTATION_CAPABILITIES.get(normalized)
+    capability = load_annotation_capabilities().get(normalized)
     if not capability:
         raise HTTPException(status_code=415, detail=f"{normalized or '该格式'}不支持人工标注")
     if require_enabled and not capability["enabled"]:
@@ -259,7 +278,7 @@ def resolve_measurement_file(drawing_id: str) -> tuple[Path, str]:
     """
     根据图纸编号解析测量文件路径和对应的文件格式。
 
-    该函数会遍历所有已启用的人工标注格式（通过 MANUAL_ANNOTATION_CAPABILITIES 配置），
+    该函数会遍历 TOML 中所有已启用的人工标注格式，
     查找是否存在对应的测量文件。如果找到，返回文件路径和格式；否则抛出异常。
 
     参数:
@@ -270,7 +289,7 @@ def resolve_measurement_file(drawing_id: str) -> tuple[Path, str]:
             - Path: 测量文件的完整路径
             - str: 文件格式（如 "dxf"）
     """
-    for source_format, capability in MANUAL_ANNOTATION_CAPABILITIES.items():
+    for source_format, capability in load_annotation_capabilities().items():
         if not capability["enabled"]:
             continue
         path = measurement_file_path(drawing_id, source_format)
@@ -311,8 +330,24 @@ def prepare_measurement_source(source_format: str, file_path: str) -> dict:
     raise HTTPException(status_code=501, detail=f"{source_format.upper()} 人工标注准备器尚未实现")
 
 
+def validate_measurement_scale_policy(payload: DxfMeasurementRequest) -> dict:
+    """服务端强制执行配置策略，避免客户端绕过校准或单位限制。"""
+    capability = annotation_capability(payload.source_format)
+    policy = capability["calibration_policy"]
+    if policy == "required" and payload.calibration is None:
+        raise HTTPException(status_code=400, detail=f"{capability['label']} 必须完成已知长度校准")
+    if policy == "none" and payload.calibration is not None:
+        raise HTTPException(status_code=400, detail=f"{capability['label']} 不支持手动校准")
+    if payload.unit_override and not capability["allow_unit_override"]:
+        raise HTTPException(status_code=400, detail=f"{capability['label']} 不允许手动指定图纸单位")
+    # 默认单位仅在用户未校准、未指定单位时生效，显式输入始终优先。
+    if payload.calibration is None and payload.unit_override is None and capability.get("default_unit"):
+        payload.unit_override = capability["default_unit"]
+    return capability
+
+
 def calculate_measurement_source(payload: DxfMeasurementRequest, file_path: str) -> dict:
-    annotation_capability(payload.source_format)
+    validate_measurement_scale_policy(payload)
     if payload.source_format == "dxf":
         return calculate_room_measurements(payload, file_path)
     raise HTTPException(status_code=501, detail=f"{payload.source_format.upper()} 人工测量计算器尚未实现")
@@ -457,7 +492,7 @@ async def get_measurement_capabilities():
     """返回人工标注格式能力；未启用格式用于前端提示和后续扩展。"""
     return ok({"formats": [
         {"format": source_format, **capability}
-        for source_format, capability in MANUAL_ANNOTATION_CAPABILITIES.items()
+        for source_format, capability in load_annotation_capabilities().items()
     ]})
 
 
@@ -505,6 +540,12 @@ async def prepare_measurement_file(source_file: UploadFile):
         "filename": source_file.filename,
         "source_format": source_format,
         "annotation_capability": capability,
+        # 文件实际单位与格式策略共同决定本次标注是否必须校准。
+        "calibration_required": capability["calibration_policy"] == "required"
+        or (
+            capability["calibration_policy"] == "when_unit_unknown"
+            and not data.get("unit_confirmed", False)
+        ),
     })
     return ok(data, message="测量底图已准备", task_status=STATE_IDLE, trace_id=trace_id)
 
@@ -594,6 +635,8 @@ async def calculate_manual_measurement(payload: DxfMeasurementRequest):
         data = calculate_measurement_source(payload, str(save_path))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("DXF manual measurement failed")
         raise HTTPException(status_code=500, detail=f"DXF 测量计算失败: {exc}") from exc
@@ -642,6 +685,8 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
     
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("DXF measurement saving failed")
         raise HTTPException(status_code=500, detail=f"DXF 面积结果保存失败: {exc}") from exc
