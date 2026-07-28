@@ -350,7 +350,7 @@ import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
 import CadViewer from './components/CadViewer.vue'
 import DxfMeasurementPanel from './components/DxfMeasurementPanel.vue'
-import { canAnnotate } from './utils/annotationCapabilities.js'
+import { canAnnotate, setAnnotationCapabilities } from './utils/annotationCapabilities.js'
 
 const tabs = [
   { key: 'home', label: '📐 图纸分析' },
@@ -466,6 +466,13 @@ onMounted(async () => {
   appLoading.value = true
   try {
     sysStatus.value = (await API.getStatus()).data || null
+    // 把后端能力表加载到前端内存，供组件判断功能是否可用，加载失败时保持关闭状态。
+    const capabilityResponse = await API.getMeasurementCapabilities()
+    if (capabilityResponse.success) {
+      setAnnotationCapabilities(capabilityResponse.data?.formats)
+    } else {
+      console.error('人工标注能力配置加载失败:', capabilityResponse.message)
+    }
     await loadVlModels()
   } catch (e) {
     appLoadingError.value = '❌ 后端连接失败: ' + (e.message || '网络异常')

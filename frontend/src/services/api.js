@@ -1,3 +1,8 @@
+/**
+ * 前端后端接口统一封装。
+ * 本文件负责配置 Axios、组织请求参数并统一转换请求错误；页面组件应通过 API 对象调用后端，
+ * 业务状态与界面逻辑由对应的状态模块和 Vue 组件维护，不在此处保存。
+ */
 import axios from 'axios'
 
 const api = axios.create({
@@ -35,6 +40,13 @@ export const API = {
   },
 
   // === 人工标注测量 ===
+  // 从后端取得完整的标注文件格式能力表
+  async getMeasurementCapabilities() {
+    try {
+      const { data } = await api.get('/measurement/capabilities')
+      return data
+    } catch (e) { return handleError(e) }
+  },
   async prepareMeasurement(file) {
     try {
       const fd = new FormData()
