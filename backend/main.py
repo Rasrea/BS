@@ -171,18 +171,19 @@ ALLOWED_IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".pdf"}
 ALLOWED_PDF_EXT = {".pdf"}
 MANUAL_ANNOTATION_CAPABILITIES = {
     "dxf": {
-        "enabled": True,
-        "label": "DXF",
-        "background_type": "vector",
-        "requires_calibration": False,
-        "unavailable_reason": "",
+        "enabled": True,               # 启用状态：已启用
+        "label": "DXF",                # 显示标签："DXF"
+        "background_type": "vector",   # 背景类型：矢量图
+        "requires_calibration": False, # 是否需要校准：不需要
+        "unavailable_reason": "",      # 不可用原因：空（因为已启用）
     },
     "pdf": {
-        "enabled": False,
-        "label": "PDF",
-        "background_type": "page",
-        "requires_calibration": True,
+        "enabled": False,             # 启用状态：未启用
+        "label": "PDF",               # 显示标签："PDF"
+        "background_type": "page",    # 背景类型：页面
+        "requires_calibration": True, # 是否需要校准：需要
         "unavailable_reason": "PDF 人工标注尚未实现，后续需增加页面渲染、页码选择和比例校准",
+        # 不可用原因：功能尚未实现，需要后续开发
     },
 }
 MAX_CAD_SIZE = 120 * 1024 * 1024   # 120MB
@@ -209,6 +210,24 @@ async def check_file_gate(file: UploadFile, max_size: int, allowed_ext: set, fil
 
 
 def annotation_capability(source_format: str, require_enabled: bool = True) -> dict:
+    """
+    获取指定文件格式的人工标注能力配置。
+
+    参数:
+        source_format: 文件格式字符串（如 "dxf", "pdf" 等），支持带前导点号的形式（如 ".dxf"）。
+        require_enabled: 是否要求格式必须启用。默认为 True，如果为 False 且格式未启用也会返回配置；
+                                如果为 True 且格式未启用，将抛出 HTTPException 异常。
+
+    返回:
+        dict: 包含以下键的字典：
+            - format (str): 标准化后的格式名称（小写、无前导点号）
+            - enabled (bool): 该格式是否已启用
+            - label (str): 格式的显示标签
+            - background_type (str): 标注背景类型
+            - requires_calibration (bool): 是否需要校准
+            - unavailable_reason (str): 不可用原因说明（仅在未启用时有意义）
+    """
+    
     normalized = str(source_format or "").lower().lstrip(".")
     capability = MANUAL_ANNOTATION_CAPABILITIES.get(normalized)
     if not capability:
@@ -219,6 +238,17 @@ def annotation_capability(source_format: str, require_enabled: bool = True) -> d
 
 
 def measurement_file_path(drawing_id: str, source_format: str = "dxf") -> Path:
+    """
+    获取指定图纸编号的测量文件路径。
+
+    参数:
+        drawing_id (str): 图纸的唯一标识符，由十六进制字符（0-9, a-f）组成。
+        source_format (str): 文件格式，默认为 "dxf"。支持通过 annotation_capability 检查的格式。
+
+    返回:
+        Path: 测量文件的完整路径，格式为 {UPLOAD_DIR}/{drawing_id}_measure.{format}。
+    """
+    
     if not drawing_id or any(char not in "0123456789abcdef" for char in drawing_id.lower()):
         raise HTTPException(status_code=400, detail="无效的测量图纸编号")
     capability = annotation_capability(source_format)
@@ -226,6 +256,20 @@ def measurement_file_path(drawing_id: str, source_format: str = "dxf") -> Path:
 
 
 def resolve_measurement_file(drawing_id: str) -> tuple[Path, str]:
+    """
+    根据图纸编号解析测量文件路径和对应的文件格式。
+
+    该函数会遍历所有已启用的人工标注格式（通过 MANUAL_ANNOTATION_CAPABILITIES 配置），
+    查找是否存在对应的测量文件。如果找到，返回文件路径和格式；否则抛出异常。
+
+    参数:
+        drawing_id (str): 图纸的唯一标识符，由十六进制字符组成。
+
+    返回:
+        tuple[Path, str]: 包含两个元素的元组：
+            - Path: 测量文件的完整路径
+            - str: 文件格式（如 "dxf"）
+    """
     for source_format, capability in MANUAL_ANNOTATION_CAPABILITIES.items():
         if not capability["enabled"]:
             continue
@@ -418,6 +462,22 @@ async def get_measurement_capabilities():
 
 
 async def prepare_measurement_file(source_file: UploadFile):
+    """
+    准备测量文件：接收用户上传的图纸文件，进行格式验证、保存和预处理。
+
+    参数:
+        source_file: 用户上传的文件对象，包含 filename 和 content 属性。
+
+    返回:
+        dict: 包含以下键的字典：
+            - success (bool): 操作是否成功
+            - data (dict): 成功时包含测量相关信息（drawing_id, filename, source_format, annotation_capability, 等）
+            - error (str): 失败时的错误信息
+            - trace_id (str): 跟踪 ID，用于调试和日志记录
+            - task_status (int): 任务状态（通常为 STATE_IDLE）
+
+    """
+    
     source_format = Path(source_file.filename).suffix.lower().lstrip(".")
     capability = annotation_capability(source_format)
     content, _ = await check_file_gate(
@@ -451,6 +511,10 @@ async def prepare_measurement_file(source_file: UploadFile):
 
 @app.post("/api/measurement/prepare")
 async def prepare_manual_measurement(source_file: UploadFile = File(...)):
+    """
+    接收用户上传的图纸文件（DXF、PDF等），进行格式验证、保存和预处理，返回测量结果。
+    """
+    
     return await prepare_measurement_file(source_file)
 
 
@@ -460,7 +524,22 @@ async def prepare_dxf_measurement(dxf_file: UploadFile = File(...)):
 
 
 async def load_measurement_view(drawing_id: str, view_id: str):
-    """按需加载已检测到的单个图纸区域。"""
+    """
+    按需加载已检测到的单个图纸区域（视图）。
+
+    参数:
+        drawing_id (str): 图纸的唯一标识符，由十六进制字符组成。
+        view_id (str): 要加载的视图/区域的唯一标识符。
+
+    返回:
+        dict: 包含以下键的字典：
+            - success (bool): 操作是否成功（始终为 True）
+            - data (dict): 图纸区域的详细信息（包含视图坐标、尺寸等）
+            - message (str): 成功消息 "图纸区域加载完成"
+            - task_status (int): 任务状态（STATE_IDLE）
+            - trace_id (str): 跟踪 ID
+    """
+    
     save_path, source_format = resolve_measurement_file(drawing_id)
     try:
         loop = asyncio.get_event_loop()
@@ -468,12 +547,15 @@ async def load_measurement_view(drawing_id: str, view_id: str):
             data = await loop.run_in_executor(None, load_dxf_measurement_view, str(save_path), view_id)
         else:
             raise HTTPException(status_code=501, detail=f"{source_format.upper()} 分页视图加载器尚未实现")
+    
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("DXF measurement view loading failed")
         raise HTTPException(status_code=500, detail=f"图纸区域加载失败: {exc}") from exc
+    
     data.update({"drawing_id": drawing_id, "source_format": source_format})
+    
     return ok(data, message="图纸区域加载完成", task_status=STATE_IDLE)
 
 
@@ -488,7 +570,25 @@ async def get_dxf_measurement_view(drawing_id: str, view_id: str):
 
 
 async def calculate_manual_measurement(payload: DxfMeasurementRequest):
-    """校验人工标注边界，并在服务端计算面积、周长和旋转包围尺寸。"""
+    """
+    校验人工标注边界，并在服务端计算面积、周长和旋转包围尺寸。
+
+    参数:
+        payload: 包含以下字段的请求体：
+            - drawing_id (str): 图纸的唯一标识符
+            - source_format (str): 文件格式（当前仅支持 "dxf"）
+            - points (List[Tuple[float, float]]): 用户标注的边界点坐标列表
+            - [其他可能需要的字段...]
+
+    返回:
+        dict: 包含以下键的字典：
+            - success (bool): 操作是否成功（始终为 True）
+            - data (dict): 计算结果，包含面积、周长、旋转包围尺寸等信息
+            - message (str): 成功消息 "房间测量完成"
+            - task_status (int): 任务状态（STATE_IDLE）
+            - trace_id (str): 跟踪 ID
+    """
+    
     save_path = measurement_file_path(payload.drawing_id, payload.source_format)
     try:
         data = calculate_measurement_source(payload, str(save_path))
@@ -511,15 +611,42 @@ async def calculate_dxf_measurement(payload: DxfMeasurementRequest):
 
 
 async def save_measurement_result(payload: DxfMeasurementRequest):
+    """
+    保存人工标注的测量结果到磁盘。
+
+    参数:
+        payload (DxfMeasurementRequest): 包含以下字段的请求体：
+            - drawing_id (str): 图纸的唯一标识符
+            - source_format (str): 文件格式（当前仅支持 "dxf"）
+            - points (List[Tuple[float, float]]): 用户标注的边界点坐标列表
+            - [其他可能需要的字段...]
+
+    返回:
+        dict: 包含测量结果的字典，包括：
+            - measurement_id (str): 测量 ID（即 drawing_id）
+            - source_format (str): 源文件格式
+            - source_file_hash (str): 源文件的 SHA256 哈希值
+            - saved_at (str): 保存时间戳（ISO 格式）
+            - spaces (list): 空间列表，每个空间包含 client_id、name、area_sqm、perimeter_m 等信息
+            - space_count (int): 空间总数
+            - total_area (float): 总面积（平方米）
+            - unit (str): 单位
+            - mm_per_unit (float): 每单位的毫米数
+            - unit_source (str): 单位来源
+    """
+    
     save_path = measurement_file_path(payload.drawing_id, payload.source_format)
     try:
+        # 计算房间的面积、周长等几何数据
         measurement = calculate_measurement_source(payload, str(save_path))
+    
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("DXF measurement saving failed")
         raise HTTPException(status_code=500, detail=f"DXF 面积结果保存失败: {exc}") from exc
 
+    # 检查计算出的房间中是否有无效的
     invalid_rooms = [room for room in measurement["rooms"] if not room["valid"]]
     if invalid_rooms:
         details = "; ".join(
@@ -528,41 +655,46 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
         )
         raise HTTPException(status_code=400, detail=f"存在无效区域，无法保存: {details}")
 
+    # 将原始测量结果转换为统一的 spaces 数据结构
     spaces = []
     for room in measurement["rooms"]:
         spaces.append({
-            "client_id": room["client_id"],
-            "name": room["name"],
-            "area_sqm": room["area_sqm"],
-            "perimeter_m": room["perimeter_m"],
-            "vertices": room["vertices"],
-            "dimensions": room["dimensions"],
-            "vertex_count": len(room["vertices"]),
-            "confidence": 1.0,
-            "boundary_source": "manual_annotation",
-            "measurement_source": "manual_annotation",
-            "valid": True,
-            "errors": [],
-            "warnings": room["warnings"],
+            "client_id": room["client_id"],           # 客户端标识符
+            "name": room["name"],                     # 房间名称
+            "area_sqm": room["area_sqm"],             # 面积（平方米）
+            "perimeter_m": room["perimeter_m"],       # 周长（米）
+            "vertices": room["vertices"],             # 顶点坐标列表
+            "dimensions": room["dimensions"],         # 尺寸信息
+            "vertex_count": len(room["vertices"]),    # 顶点数量
+            "confidence": 1.0,                        # 置信度
+            "boundary_source": "manual_annotation",   # 边界数据来源
+            "measurement_source": "manual_annotation",# 测量数据来源
+            "valid": True,                            # 有效性标志
+            "errors": [],                             # 错误列表
+            "warnings": room["warnings"],             # 警告列表
         })
 
-    total_area = sum(space["area_sqm"] for space in spaces)
     result = {
-        "measurement_id": payload.drawing_id,
-        "source_format": payload.source_format,
-        "source_file_hash": file_sha256(save_path.read_bytes()),
-        "saved_at": datetime.now().isoformat(),
-        "spaces": spaces,
-        "space_count": len(spaces),
-        "total_area": round(total_area, 2),
-        "unit": measurement["unit"],
-        "mm_per_unit": measurement["mm_per_unit"],
-        "unit_source": measurement["unit_source"],
+        "measurement_id": payload.drawing_id,           # 测量ID（图纸编号）
+        "source_format": payload.source_format,         # 源文件格式（如"dxf"）
+        "source_file_hash": file_sha256(save_path.read_bytes()),  # 源文件的SHA256哈希值
+        "saved_at": datetime.now().isoformat(),         # 保存时间戳（ISO格式）
+        "spaces": spaces,                               # 空间列表（房间详情）
+        "space_count": len(spaces),                     # 空间总数
+        "total_area": round(
+            sum(space["area_sqm"] for space in spaces), 2
+            ),  # 总面积（平方米，保留2位小数）
+        "unit": measurement["unit"],                    # 单位（如"mm"）
+        "mm_per_unit": measurement["mm_per_unit"],      # 每单位的毫米数（比例因子）
+        "unit_source": measurement["unit_source"],      # 单位来源（如"DXF头部信息"）
     }
+    
+    # 原子写入文件
     result_path = measurement_result_path(payload.drawing_id)
     temp_path = result_path.with_suffix(".tmp")
     temp_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     temp_path.replace(result_path)
+    
     return result
 
 
@@ -615,29 +747,32 @@ async def analyze_full(
     save_path = UPLOAD_DIR / f"{task_id}_cad{ext}"
     save_path.write_bytes(content)
 
-    error = None
-    tid = ""
-    saved_measurement = None
-    if measurement_id:
+    error = None              # 错误信息容器
+    tid = ""                  # 用于后续日志和调试追踪
+    saved_measurement = None  # ← 哨兵变量
+    
+    # 步骤A：判断是否有人工标注数据
+    if measurement_id:        
         source_format = ext.lstrip(".")
         annotation_capability(source_format)
         saved_measurement = load_saved_measurement(measurement_id, content)
         if saved_measurement.get("source_format", "dxf") != source_format:
             raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
 
+    # 步骤B：走人工标注路径（跳过CAD解析）
     if saved_measurement:
         data = {
-            "spaces": saved_measurement["spaces"],
-            "parse_method": "人工标注面积",
-            "needs_manual_review": False,
-            "manual_review_reason": "",
-            "dxf_repair_count": 0,
-            "measurement_id": measurement_id,
-            "source_format": source_format,
+            "spaces": saved_measurement["spaces"],  # 从已有测量结果中提取房间空间列表
+            "parse_method": "人工标注面积",          # 解析方法标记为"人工标注面积"
+            "needs_manual_review": False,           # 是否需要人工复核：否（因为人工标注本身就是经过确认的）
+            "manual_review_reason": "",             # 人工复核原因：空（不需要复核）
+            "dxf_repair_count": 0,                  # DXF 修复次数：0（无需修复）
+            "measurement_id": measurement_id,       # 测量 ID（图纸编号）
+            "source_format": source_format,         # 源文件格式
         }
         tid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
 
-    # PDF 路径：矢量解析（优先）+ 视觉识别（回退）
+    # 步骤C：正常CAD解析（measurement_id 为 None）
     elif ext == ".pdf":
         from pdf_parser import parse_pdf_vector
         from cad_parser import _parse_cad_pdf
@@ -1082,99 +1217,64 @@ async def cad_test(
     Returns:
         每个空间的面积误差、百分比误差等评估信息
     """
+    
+    from vision_harness.cad_metrics import evaluate_cad_evaluations
+    
     try:
         cad_data = json.loads(cad_result) if cad_result else {}
-        gt_data = json.loads(ground_truth_json) if ground_truth_json else {}
+        true_data = json.loads(ground_truth_json) if ground_truth_json else {}
     except json.JSONDecodeError as e:
         return err(400, f"JSON 格式错误: {e}")
     
     # 提取 spaces 列表
-    spaces = []
-    if isinstance(cad_data, dict):
-        spaces = cad_data.get("spaces", [])
-    elif isinstance(cad_data, list):
-        spaces = cad_data
+    predict_spaces = []
+    predict_spaces = cad_data["spaces"]
     
-    if not spaces:
-        return err(400, "CAD 结果中未找到 spaces 数据")
+    if not predict_spaces:
+        return err(400, "CAD 结果中未找到 predict_spaces 数据")
     
-    # 构建 ground truth 查找表：space_name -> area
-    gt_map = {}
-    if isinstance(gt_data, list):
-        for item in gt_data:
-            if isinstance(item, dict):
-                name = item.get("name") or item.get("space_name")
-                area = item.get("area") or item.get("area_sqm")
-                if name and area is not None:
-                    gt_map[name] = float(area)
-    elif isinstance(gt_data, dict):
-        gt_spaces = gt_data.get("spaces", [])
-        for item in gt_spaces:
-            if isinstance(item, dict):
-                name = item.get("name") or item.get("space_name")
-                area = item.get("area") or item.get("area_sqm")
-                if name and area is not None:
-                    gt_map[name] = float(area)
+    # 构建真实值查找表：name -> area, perimeter
+    true_map = {}
+    true_spaces = true_data.get("spaces", [])
+    for item in true_spaces:
+        name = item.get("name")
+        true_map[name] = {
+            "area_sqm": item.get("area_sqm"), 
+            "perimeter_m": item.get("perimeter_m")
+        }       
     
     # 计算每个空间的误差
-    evaluations = []
-    total_parsed_area = 0
-    total_gt_area = 0
+    raw_data = []
     
-    for space in spaces:
-        if not isinstance(space, dict):
-            continue
+    for space in predict_spaces:
+        # 读取预测值
+        name = space.get("name") or "未知空间"
+        predict_area = float(space.get("area_sqm") or 0)
+        predict_perimeter = space.get("perimeter_m")
         
-        space_name = space.get("name") or space.get("space_name") or "未知空间"
-        parsed_area = float(space.get("area") or space.get("area_sqm") or 0)
-        perimeter = space.get("perimeter_m")
-        
-        gt_area = gt_map.get(space_name)
+        # 读取测试值
+        true_area = None
+        true_perimeter = None
+        if true_map.get(name):
+            true_area = true_map.get(name).get("area_sqm")
+            true_perimeter = true_map.get(name).get("perimeter_m")
         
         error_info = {
-            "space_name": space_name,
-            "parsed_area": parsed_area,
-            "gt_area": gt_area,
-            "error_absolute": None,
-            "error_percent": None,
-            "error_level": "no_data",
+            "name": name,
+            "predict_area": predict_area,
+            "true_area": true_area,
+            "predict_perimeter": predict_perimeter,
+            "true_perimeter": true_perimeter,
         }
         
-        if gt_area is not None and gt_area != 0:
-            abs_error = abs(parsed_area - gt_area)
-            pct_error = (abs_error / gt_area) * 100
-            
-            error_info["error_absolute"] = round(abs_error, 2)
-            error_info["error_percent"] = round(pct_error, 2)
-            
-            if pct_error <= 5:
-                error_info["error_level"] = "excellent"
-            elif pct_error <= 15:
-                error_info["error_level"] = "good"
-            elif pct_error <= 30:
-                error_info["error_level"] = "warning"
-            else:
-                error_info["error_level"] = "poor"
-            
-            total_parsed_area += parsed_area
-            total_gt_area += gt_area
-        
-        evaluations.append(error_info)
+        raw_data.append(error_info)
     
-    # 总体统计
-    overall_error = None
-    if total_gt_area > 0:
-        overall_error = round((abs(total_parsed_area - total_gt_area) / total_gt_area) * 100, 2)
-    
+    cad_evaluations = evaluate_cad_evaluations(raw_data)
+
     result = {
-        "evaluations": evaluations,
-        "summary": {
-            "total_spaces": len(evaluations),
-            "spaces_with_gt": sum(1 for e in evaluations if e["gt_area"] is not None),
-            "overall_error_percent": overall_error,
-            "total_parsed_area": round(total_parsed_area, 2),
-            "total_gt_area": round(total_gt_area, 2),
-        },
+        "total_spaces": len(raw_data),
+        "raw_data": raw_data,
+        "cad_evaluations": cad_evaluations,
     }
     
     return ok(result)

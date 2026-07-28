@@ -297,7 +297,10 @@
 
       <!-- Tab 7: 识别测试 -->
       <div v-show="activeTab === 'vision_test'">
-        <VisionTestPanel @cad-preview="onCadPreview" />
+        <VisionTestPanel 
+          @cad-preview="onCadPreview" 
+          @cad-annotate="onCadAnnotate" 
+        />
       </div>
     </main>
 
@@ -573,6 +576,7 @@ function onCadPreview(fileData) {
   cadPreviewFile.value = fileData
   showCadPreview.value = true
 }
+
 function closeCadPreview() {
   // 先显式销毁引擎，再隐藏 overlay
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
@@ -580,10 +584,28 @@ function closeCadPreview() {
   cadPreviewFile.value = null
   cadMeasurementPreviewFile.value = null
 }
+
+
+// App.vue 新增一个 ref 来暂存 callback
+const pendingCadCallback = ref(null)
+
+function onCadAnnotate(fileObj) {
+  pendingCadCallback.value = fileObj.callback || null  // ← 保存 callback
+  cadMeasurementPreviewFile.value = fileObj.file
+  cadPreviewFile.value = null
+  showCadPreview.value = true
+}
+
 function onMeasurementSaved(result) {
+  // 先调用 callback，把 measurement_id（即 drawing_id）传回 VisionTestPanel
+  if (pendingCadCallback.value) {
+    pendingCadCallback.value(result.measurement_id)
+    pendingCadCallback.value = null
+  }
+
   savedMeasurementResult.value = result
   analysisDone.value = false
-  closeCadPreview()
+  closeCadPreview()  // ← 注意：closeCadPreview 里会清掉 cadMeasurementPreviewFile，但 callback 已提前调用
 }
 
 async function startAnalysis() {
