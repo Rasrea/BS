@@ -654,6 +654,11 @@ async function startAnalysis() {
 
     const t0 = Date.now()
     imageResult.value = await API.analyzeImage(imageFile.value)
+    imageResult.value = await API.analyzeImage(imageFile.value, {
+      model: selectedModel.value,
+      // TODO
+      cropEnabled: "true",  // 默认开启
+    })
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
 
     setStepDone('📤 上传效果图...', dur)

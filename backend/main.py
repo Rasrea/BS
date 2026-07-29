@@ -905,6 +905,8 @@ async def upload_clear():
 @app.post("/api/analyze")
 async def analyze_image(
     image_file: UploadFile = File(None),
+    model: str = Form(""),
+    crop_enabled: str = Form("true"),
 ):
     """
     接口2：单张效果图材质/空间同步识别
@@ -912,6 +914,9 @@ async def analyze_image(
     能力：LLaVA识别材质、空间、软装
     状态约束：仅idle可调用，占用ai_running锁
     """
+    logger.info("🚀 /api/analyze called")
+    logger.info("📷 filename=%s", image_file.filename)
+
     if not image_file:
         return err(400, "请上传效果图（jpg/png/webp）")
 
@@ -921,57 +926,87 @@ async def analyze_image(
     save_path = UPLOAD_DIR / f"{task_id}_img{ext}"
     save_path.write_bytes(content)
 
-    # ── 图片预处理：缩放/压缩/去EXIF ──
+    # 步骤1：图像预处理
     processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
     stats = preprocess_image_stats(str(save_path), processed_path)
     print(f"[image_preprocessor] {image_file.filename}: "
           f"{stats['original_size_kb']}KB -> {stats['processed_size_kb']}KB "
           f"({stats['compression_ratio']}% reduction)")
 
-    # 读取当前配置的视觉模型
-    settings = await db.get_settings()
-    vl_model = settings.get("active_vl_model", "llava:7b")
+    # 步骤2：模型推理
+    from image_recognizer import recognize_with_fallback
+
+    if model:
+        vl_model = model
+    else:
+        settings = await db.get_settings()
+        vl_model = settings.get("active_vl_model", "qwen2.5:7b")
 
     # 从数据库查询自定义模型的完整配置
     custom_models = await db.get_custom_vl_models()
     model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
-    model_type = model_info.get("model_type") if model_info else None
-    api_base_url = model_info.get("api_base_url") if model_info else None
-    api_token = model_info.get("api_token") if model_info else None
+    vl_model_type = model_info.get("model_type") if model_info else None
+    vl_api_base_url = model_info.get("api_base_url") if model_info else None
+    vl_api_token = model_info.get("api_token") if model_info else None
+    vl_api_format = model_info.get("api_format") if model_info else None
 
-    data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback,
-                                      processed_path, vl_model,
-                                      model_type=model_type,
-                                      api_base_url=api_base_url,
-                                      api_token=api_token)
+    use_crop = crop_enabled.lower() in ("true", "1", "yes")
 
-    if error:
-        return err(504, f"AI识别失败: {error}", task_status=STATE_IDLE, trace_id=tid)
+    if use_crop:
+        from crop_recognizer import CropRecognizer
+        recognizer = CropRecognizer(
+            model_type=vl_model_type,
+            api_base_url=vl_api_base_url,
+            api_token=vl_api_token,
+            api_format=vl_api_format,
+        )
+        recognition_result = recognizer.recognize_with_crop(
+            image_path=processed_path,
+            model=vl_model,
+            upload_dir=UPLOAD_DIR,
+            task_id=task_id,
+        )
+    else:
+        recognition_result = recognize_with_fallback(
+            processed_path, vl_model,
+            model_type=vl_model_type,
+            api_base_url=vl_api_base_url,
+            api_token=vl_api_token,
+            api_format=vl_api_format,
+        )
+        recognition_result["_crop_mode"] = "disabled"
 
-    if not data:
-        return err(500, "AI识别无结果", task_status=STATE_IDLE, trace_id=tid)
+    # 清理临时文件
+    try:
+        os.remove(save_path)
+        os.remove(processed_path)
+    except Exception:
+        pass
+
+    if not recognition_result:
+        return err(500, "AI识别无结果", task_status=STATE_IDLE)
 
     # 解析结构化数据（v2.0格式）
-    structured = data.get("structured", {})
+    structured = recognition_result.get("structured", {})
     recognized_space = structured.get("space_type", "")
     wall_mat = structured.get("wall_material", "")
     floor_mat = structured.get("floor_material", "")
     ceiling_mat = structured.get("ceiling_material", "")
     decor_style = structured.get("decor_style", "")
     remark = structured.get("remark", "")
-    model_used = data.get("model_used", vl_model)
-    success = data.get("success", False)
+    model_used = recognition_result.get("model_used", vl_model)
+    success = recognition_result.get("success", False)
 
-    if not recognized_space and not data.get("error"):
+    if not recognized_space and not recognition_result.get("error"):
         # 兼容旧格式：尝试从 spaces[0] 提取
-        spaces_list = data.get("spaces", [])
+        spaces_list = recognition_result.get("spaces", [])
         first_space = spaces_list[0] if spaces_list else {}
         recognized_space = first_space.get("type", first_space.get("space", ""))
         mats = first_space.get("materials", {})
         wall_mat = mats.get("wall", wall_mat)
         floor_mat = mats.get("floor", floor_mat)
         ceiling_mat = mats.get("ceiling", ceiling_mat)
-        decor_style = data.get("overall_style", decor_style)
+        decor_style = recognition_result.get("overall_style", decor_style)
 
     # 构造完整 material_info
     material_info = {
@@ -1004,13 +1039,13 @@ async def analyze_image(
         "confidence": confidence,
         "model_used": model_used,
         "structured": structured,
+        "raw_result": recognition_result,
     }
 
-    if not success and data.get("error"):
-        result["warning"] = data["error"]
+    if not success and recognition_result.get("error"):
+        result["warning"] = recognition_result["error"]
 
-    return ok(result, task_status=STATE_IDLE, trace_id=tid)
-
+    return ok(result, task_status=STATE_IDLE)
 
 # ─────────────────── 接口：视觉识别独立测试（诊断用） ───────────────────
 @app.post("/api/vision_test")

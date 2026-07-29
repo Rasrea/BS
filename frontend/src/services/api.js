@@ -69,13 +69,13 @@ export const API = {
   },
 
   // === 效果图识别 (接口2) ===
-  async analyzeImage(file) {
-    try {
-      const fd = new FormData()
-      fd.append('image_file', file)
-      const { data } = await api.post('/analyze', fd, { timeout: 120000 })
-      return data
-    } catch (e) { return handleError(e) }
+  async analyzeImage(file, { model = '', cropEnabled = true } = {}) {
+    const fd = new FormData()
+    fd.append('image_file', file)
+    fd.append('model', model)  // 模型名称
+    fd.append('crop_enabled', cropEnabled ? 'true' : 'false')  // 是否图像裁剪
+    const { data } = await api.post('/analyze', fd, { timeout: 120000 })
+    return data
   },
 
   // === 数据融合 (接口3) ===
