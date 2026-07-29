@@ -312,7 +312,7 @@
           :active="true"
           :embedded="true"
           :initial-file="cadMeasurementPreviewFile"
-          :initial-spaces="currentSavedMeasurementResult?.spaces || []"
+          :initial-spaces="currentSavedMeasurementResult?.spaces || emptyInitialSpaces"
           :review-reason="cadResult?.data?.manual_review_reason || ''"
           @close="closeCadPreview"
           @saved="onMeasurementSaved"
@@ -410,6 +410,8 @@ const cadMeasurementPreviewFile = ref(null)
 const savedMeasurementResult = ref(null)
 // 保存“这份标注结果属于哪张图纸”的身份标识。
 const savedMeasurementFileSignature = ref('')
+// 给人工标注面板传稳定空数组，避免父组件重渲染时误触发子组件重新加载。
+const emptyInitialSpaces = []
 
 const cadViewerRef = ref(null)
 // 给当前文件生成一个简单签名
