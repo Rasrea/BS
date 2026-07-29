@@ -325,6 +325,36 @@ def cleanup_measurement_work_files(drawing_id: str, source_format: str = "dxf") 
         logger.exception("Manual measurement temporary cleanup failed")
 
 
+
+def cleanup_upload_work_paths(*paths) -> None:
+    """在不允许删除 UPLOAD_DIR 目录之外文件的前提下，移除临时上传文件。"""
+    upload_root = UPLOAD_DIR.resolve()
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        try:
+            path = Path(raw_path).resolve()
+            if path == upload_root:
+                logger.warning("Skip cleanup of upload root: %s", path)
+                continue
+            if path != upload_root and upload_root not in path.parents:
+                logger.warning("Skip cleanup outside upload dir: %s", path)
+                continue
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        except Exception:
+            logger.exception("Temporary upload cleanup failed: %s", raw_path)
+
+
+def cleanup_upload_task_artifacts(task_id: str) -> None:
+    """删除为单次上传任务创建的所有临时文件及裁剪文件夹。"""
+    if not task_id or not task_id.replace("_", "").isalnum():
+        return
+    for path in UPLOAD_DIR.glob(f"{task_id}*"):
+        cleanup_upload_work_paths(path)
+
 def load_saved_measurement(drawing_id: str, source_content: bytes) -> dict:
     result_path = measurement_result_path(drawing_id)
     if not result_path.exists():
@@ -671,36 +701,50 @@ async def calculate_dxf_measurement(payload: DxfMeasurementRequest):
 
 
 async def save_measurement_result(payload: DxfMeasurementRequest):
-    """
-    保存人工标注的测量结果到磁盘。
-
-    参数:
-        payload (DxfMeasurementRequest): 包含以下字段的请求体：
-            - drawing_id (str): 图纸的唯一标识符
-            - source_format (str): 文件格式（当前仅支持 "dxf"）
-            - points (List[Tuple[float, float]]): 用户标注的边界点坐标列表
-            - [其他可能需要的字段...]
-
-    返回:
-        dict: 包含测量结果的字典，包括：
-            - measurement_id (str): 测量 ID（即 drawing_id）
-            - source_format (str): 源文件格式
-            - source_file_hash (str): 源文件的 SHA256 哈希值
-            - saved_at (str): 保存时间戳（ISO 格式）
-            - spaces (list): 空间列表，每个空间包含 client_id、name、area_sqm、perimeter_m 等信息
-            - space_count (int): 空间总数
-            - total_area (float): 总面积（平方米）
-            - unit (str): 单位
-            - mm_per_unit (float): 每单位的毫米数
-            - unit_source (str): 单位来源
-    """
-    
-    save_path = measurement_file_path(payload.drawing_id, payload.source_format)
-    source_file_hash = file_sha256(save_path.read_bytes())
+    """ 无论成功还是抛错，都会调用清理函数"""
     try:
-        # 计算房间的面积、周长等几何数据
+        save_path = measurement_file_path(payload.drawing_id, payload.source_format)
+        source_file_hash = file_sha256(save_path.read_bytes())
         measurement = calculate_measurement_source(payload, str(save_path))
-    
+
+        invalid_rooms = [room for room in measurement["rooms"] if not room["valid"]]
+        if invalid_rooms:
+            details = "; ".join(
+                f"{room['name']}: {', '.join(room['errors'])}"
+                for room in invalid_rooms[:5]
+            )
+            raise HTTPException(status_code=400, detail=f"存在无效区域，无法保存: {details}")
+
+        spaces = []
+        for room in measurement["rooms"]:
+            spaces.append({
+                "client_id": room["client_id"],
+                "name": room["name"],
+                "area_sqm": room["area_sqm"],
+                "perimeter_m": room["perimeter_m"],
+                "vertices": room["vertices"],
+                "dimensions": room["dimensions"],
+                "vertex_count": len(room["vertices"]),
+                "confidence": 1.0,
+                "boundary_source": "manual_annotation",
+                "measurement_source": "manual_annotation",
+                "valid": True,
+                "errors": [],
+                "warnings": room["warnings"],
+            })
+
+        return {
+            "measurement_id": payload.drawing_id,
+            "source_format": payload.source_format,
+            "source_file_hash": source_file_hash,
+            "saved_at": datetime.now().isoformat(),
+            "spaces": spaces,
+            "space_count": len(spaces),
+            "total_area": round(sum(space["area_sqm"] for space in spaces), 2),
+            "unit": measurement["unit"],
+            "mm_per_unit": measurement["mm_per_unit"],
+            "unit_source": measurement["unit_source"],
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
@@ -708,54 +752,9 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
     except Exception as exc:
         logger.exception("DXF measurement saving failed")
         raise HTTPException(status_code=500, detail=f"DXF 面积结果保存失败: {exc}") from exc
-
-    # 检查计算出的房间中是否有无效的
-    invalid_rooms = [room for room in measurement["rooms"] if not room["valid"]]
-    if invalid_rooms:
-        details = "; ".join(
-            f"{room['name']}: {', '.join(room['errors'])}"
-            for room in invalid_rooms[:5]
-        )
-        raise HTTPException(status_code=400, detail=f"存在无效区域，无法保存: {details}")
-
-    # 将原始测量结果转换为统一的 spaces 数据结构
-    spaces = []
-    for room in measurement["rooms"]:
-        spaces.append({
-            "client_id": room["client_id"],           # 客户端标识符
-            "name": room["name"],                     # 房间名称
-            "area_sqm": room["area_sqm"],             # 面积（平方米）
-            "perimeter_m": room["perimeter_m"],       # 周长（米）
-            "vertices": room["vertices"],             # 顶点坐标列表
-            "dimensions": room["dimensions"],         # 尺寸信息
-            "vertex_count": len(room["vertices"]),    # 顶点数量
-            "confidence": 1.0,                        # 置信度
-            "boundary_source": "manual_annotation",   # 边界数据来源
-            "measurement_source": "manual_annotation",# 测量数据来源
-            "valid": True,                            # 有效性标志
-            "errors": [],                             # 错误列表
-            "warnings": room["warnings"],             # 警告列表
-        })
-
-    result = {
-        "measurement_id": payload.drawing_id,           # 测量ID（图纸编号）
-        "source_format": payload.source_format,         # 源文件格式（如"dxf"）
-        "source_file_hash": source_file_hash,  # 源文件的SHA256哈希值
-        "saved_at": datetime.now().isoformat(),         # 保存时间戳（ISO格式）
-        "spaces": spaces,                               # 空间列表（房间详情）
-        "space_count": len(spaces),                     # 空间总数
-        "total_area": round(
-            sum(space["area_sqm"] for space in spaces), 2
-            ),  # 总面积（平方米，保留2位小数）
-        "unit": measurement["unit"],                    # 单位（如"mm"）
-        "mm_per_unit": measurement["mm_per_unit"],      # 每单位的毫米数（比例因子）
-        "unit_source": measurement["unit_source"],      # 单位来源（如"DXF头部信息"）
-    }
-    
-    # Manual annotation results are session-only; remove the uploaded work copy after returning data.
-    cleanup_measurement_work_files(payload.drawing_id, payload.source_format)
-    
-    return result
+    finally:
+        # 人工标注文件只是会话临时文件，保存校验失败也要清理。
+        cleanup_measurement_work_files(payload.drawing_id, payload.source_format)
 
 
 @app.post("/api/measurement/save")
@@ -788,14 +787,7 @@ async def analyze_full(
     manual_measurement: str = Form(None),
     measurement_id: str = Form(None),
 ):
-    """
-    接口1：CAD 文件解析 + 报价
-    入参：cad_file=@xxx.dxf / @xxx.dwg / @xxx.pdf
-    能力：解析空间、精准算量、自动报价
-        - .dxf/.dwg → 矢量解析 (ezdxf)
-        - .pdf     → 矢量路径解析 (优先) / 视觉识别 (回退)
-    状态约束：仅idle可调用，占用cad_running锁
-    """
+    """CAD/PDF 解析与报价。上传的源文件为临时文件，解析完成后即被删除。"""
     if not cad_file:
         return err(400, "请上传CAD文件（.dxf/.dwg/.pdf）")
 
@@ -803,476 +795,460 @@ async def analyze_full(
 
     content, ext = await check_file_gate(cad_file, MAX_CAD_SIZE, ALLOWED_CAD_EXT, "CAD")
 
-    # 保存文件
     task_id = uuid.uuid4().hex[:12]
     save_path = UPLOAD_DIR / f"{task_id}_cad{ext}"
     save_path.write_bytes(content)
+    # 数据库模式要求包含文件路径，但用户绘图本身不得保留。
+    analysis_file_record_path = "[cleared-after-analysis]"
 
-    error = None              # 错误信息容器
-    tid = ""                  # 用于后续日志和调试追踪
-    if measurement_id:
-        # 人工标注结果已改为前端会话态，不再从服务端临时 JSON 读取；旧客户端参数直接忽略，避免误报“结果不存在”。
-        logger.info("Ignoring legacy measurement_id during CAD analysis: %s", measurement_id)
+    try:
+        error = None
+        tid = ""
+        if measurement_id:
+            logger.info("Ignoring legacy measurement_id during CAD analysis: %s", measurement_id)
 
-    if manual_measurement:
-        try:
-            saved_measurement = json.loads(manual_measurement)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail="人工面积结果格式无效，请重新标注") from exc
-        # 人工结果来自前端会话态；用源文件哈希校验，防止切换图纸后误用旧标注。
-        if saved_measurement.get("source_file_hash") != file_sha256(content):
-            raise HTTPException(status_code=409, detail="人工面积结果与当前图纸不匹配，请重新标注")
-        if saved_measurement.get("source_format", ext.lstrip(".")) != ext.lstrip("."):
-            raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
-        spaces = saved_measurement.get("spaces") or []
+        if manual_measurement:
+            try:
+                saved_measurement = json.loads(manual_measurement)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=400, detail="人工面积结果格式无效，请重新标注") from exc
+            # 人工结果来自前端会话态；用源文件哈希校验，防止切换图纸后误用旧标注。
+            if saved_measurement.get("source_file_hash") != file_sha256(content):
+                raise HTTPException(status_code=409, detail="人工面积结果与当前图纸不匹配，请重新标注")
+            if saved_measurement.get("source_format", ext.lstrip(".")) != ext.lstrip("."):
+                raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
+            spaces = saved_measurement.get("spaces") or []
+            if not spaces:
+                raise HTTPException(status_code=422, detail="人工面积结果为空，请重新标注")
+            data = {
+                "spaces": spaces,
+                "parse_method": "人工标注面积",
+                "needs_manual_review": False,
+                "manual_review_reason": "",
+                "dxf_repair_count": 0,
+                "measurement_id": saved_measurement.get("measurement_id"),
+                "source_format": saved_measurement.get("source_format", ext.lstrip(".")),
+            }
+            tid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
+
+        # 没有人工标注结果时，才进入自动CAD/PDF识别。
+        elif ext == ".pdf":
+            from pdf_parser import parse_pdf_vector
+            from cad_parser import _parse_cad_pdf
+
+            data, tid, error = await safe_run("cad", TIMEOUT_CAD, parse_pdf_vector, str(save_path))
+
+            # 回退条件：矢量数为0 或 解析出错且无数据
+            need_fallback = error or (data and data.get("vector_count", 0) == 0 and not data.get("spaces"))
+            if need_fallback:
+                fb_data, _, fb_error = await safe_run("cad", TIMEOUT_CAD, _parse_cad_pdf, str(save_path))
+                if fb_error:
+                    return err(504, "PDF解析失败（矢量/视觉回退均失败）: " + fb_error, task_status=STATE_IDLE)
+                if fb_data and fb_data.get("spaces"):
+                    data = fb_data
+                    data["parse_method"] = "PDF转图片后视觉识别（矢量回退）"
+
+            if error and not data:
+                return err(504, "PDF解析失败: " + error, task_status=STATE_IDLE)
+
+        # DXF/DWG 路径（原有逻辑，完全不变）
+        else:
+            from cad_parser import _parse_dxf
+            data, tid, error = await safe_run("cad", TIMEOUT_CAD, _parse_dxf, str(save_path))
+
+        if error:
+            return err(504, f"CAD解析失败: {error}", task_status=STATE_IDLE)
+
+        if not data:
+            return err(500, "CAD解析无结果返回", task_status=STATE_IDLE)
+
+        # 计算报价
+        spaces = data.get("spaces", data.get("data", []))
         if not spaces:
-            raise HTTPException(status_code=422, detail="人工面积结果为空，请重新标注")
-        data = {
-            "spaces": spaces,
-            "parse_method": "人工标注面积",
-            "needs_manual_review": False,
-            "manual_review_reason": "",
-            "dxf_repair_count": 0,
-            "measurement_id": saved_measurement.get("measurement_id"),
-            "source_format": saved_measurement.get("source_format", ext.lstrip(".")),
-        }
-        tid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
+            drawing_id = await db.add_drawing(cad_file.filename, analysis_file_record_path, len(content))
+            await db.update_drawing_parse(
+                drawing_id,
+                "needs_review",
+                {"spaces_count": 0, "total_area": 0},
+            )
+            return ok({
+                "drawing_id": drawing_id,
+                "spaces": [],
+                "base_price": 0,
+                "total_area": 0,
+                "space_count": 0,
+                "parse_method": data.get("parse_method", ""),
+                "needs_manual_review": data.get("needs_manual_review", True),
+                "manual_review_reason": data.get(
+                    "manual_review_reason",
+                    "未识别到可靠房间边界，请进入人工测量补画",
+                ),
+                "dxf_repair_count": data.get("dxf_repair_count", 0),
+                "source_format": ext.lstrip("."),
+            })
 
-    # 没有人工标注结果时，才进入自动CAD/PDF识别。
-    elif ext == ".pdf":
-        from pdf_parser import parse_pdf_vector
-        from cad_parser import _parse_cad_pdf
+        total_area = sum(s.get("area", s.get("area_sqm", 0)) for s in spaces)
 
-        data, tid, error = await safe_run("cad", TIMEOUT_CAD, parse_pdf_vector, str(save_path))
+        # 从数据库读取配置单价
+        settings = await db.get_settings()
+        unit_price = float(settings.get("base_unit_price", 9374))
+        manage_rate = float(settings.get("manage_fee_rate", 0.05))
+        tax_rate = float(settings.get("tax_rate", 0.03))
 
-        # 回退条件：矢量数为0 或 解析出错且无数据
-        need_fallback = error or (data and data.get("vector_count", 0) == 0 and not data.get("spaces"))
-        if need_fallback:
-            fb_data, _, fb_error = await safe_run("cad", TIMEOUT_CAD, _parse_cad_pdf, str(save_path))
-            if fb_error:
-                return err(504, "PDF解析失败（矢量+视觉回退均失败）: " + fb_error, task_status=STATE_IDLE)
-            if fb_data and fb_data.get("spaces"):
-                data = fb_data
-                data["parse_method"] = "PDF→图片→视觉识别（矢量回退）"
+        base_price = total_area * unit_price
+        manage_fee = base_price * manage_rate
+        tax_fee = base_price * tax_rate
+        final_price = base_price + manage_fee + tax_fee
 
-        if error and not data:
-            return err(504, "PDF解析失败: " + error, task_status=STATE_IDLE)
+        # 写数据库
+        drawing_id = await db.add_drawing(cad_file.filename, analysis_file_record_path, len(content))
+        for s in spaces:
+            area = s.get("area", s.get("area_sqm", 0))
+            length = s.get("length", s.get("dimensions", {}).get("width_m", 0))
+            width = s.get("width", s.get("dimensions", {}).get("height_m", 0))
+            await db.add_cad_result(drawing_id, s.get("name", ""), area, length, width)
+        await db.update_drawing_parse(drawing_id, "completed", {"spaces_count": len(spaces), "total_area": total_area})
 
-    # DXF/DWG 路径（原有逻辑，完全不变）
-    else:
-        from cad_parser import _parse_dxf
-        data, tid, error = await safe_run("cad", TIMEOUT_CAD, _parse_dxf, str(save_path))
-
-    if error:
-        return err(504, f"CAD解析失败: {error}", task_status=STATE_IDLE)
-
-    if not data:
-        return err(500, "CAD解析无结果返回", task_status=STATE_IDLE)
-
-    # 计算报价
-    spaces = data.get("spaces", data.get("data", []))
-    if not spaces:
-        drawing_id = await db.add_drawing(cad_file.filename, str(save_path), len(content))
-        await db.update_drawing_parse(
-            drawing_id,
-            "needs_review",
-            {"spaces_count": 0, "total_area": 0},
-        )
-        return ok({
+        result = {
             "drawing_id": drawing_id,
-            "spaces": [],
-            "base_price": 0,
-            "total_area": 0,
-            "space_count": 0,
+            "spaces": spaces,
+            "space_count": len(spaces),
+            "total_area": round(total_area, 2),
+            "unit_price": unit_price,
+            "base_price": round(base_price, 2),
+            "manage_fee": round(manage_fee, 2),
+            "tax_fee": round(tax_fee, 2),
+            "final_price": round(final_price, 2),
+            "project_name": project_name,
             "parse_method": data.get("parse_method", ""),
-            "needs_manual_review": data.get("needs_manual_review", True),
-            "manual_review_reason": data.get(
-                "manual_review_reason",
-                "未识别到可靠房间边界，请进入人工测量补画",
-            ),
+            "needs_manual_review": data.get("needs_manual_review", False),
+            "manual_review_reason": data.get("manual_review_reason", ""),
             "dxf_repair_count": data.get("dxf_repair_count", 0),
-            "source_format": ext.lstrip("."),
-        })
+            "measurement_id": data.get("measurement_id"),
+            "source_format": data.get("source_format", ext.lstrip(".")),
+        }
 
-    total_area = sum(s.get("area", s.get("area_sqm", 0)) for s in spaces)
+        return ok(result, task_status=STATE_IDLE, trace_id=tid)
+    finally:
+        # Formal analysis also receives user drawings; remove the parser work copy after use.
+        save_path.unlink(missing_ok=True)
 
-    # 从数据库读取配置单价
-    settings = await db.get_settings()
-    unit_price = float(settings.get("base_unit_price", 9374))
-    manage_rate = float(settings.get("manage_fee_rate", 0.05))
-    tax_rate = float(settings.get("tax_rate", 0.03))
-
-    base_price = total_area * unit_price
-    manage_fee = base_price * manage_rate
-    tax_fee = base_price * tax_rate
-    final_price = base_price + manage_fee + tax_fee
-
-    # 写数据库
-    drawing_id = await db.add_drawing(cad_file.filename, str(save_path), len(content))
-    for s in spaces:
-        area = s.get("area", s.get("area_sqm", 0))
-        length = s.get("length", s.get("dimensions", {}).get("width_m", 0))
-        width = s.get("width", s.get("dimensions", {}).get("height_m", 0))
-        await db.add_cad_result(drawing_id, s.get("name", ""), area, length, width)
-    await db.update_drawing_parse(drawing_id, "completed", {"spaces_count": len(spaces), "total_area": total_area})
-
-    result = {
-        "drawing_id": drawing_id,
-        "spaces": spaces,
-        "space_count": len(spaces),
-        "total_area": round(total_area, 2),
-        "unit_price": unit_price,
-        "base_price": round(base_price, 2),
-        "manage_fee": round(manage_fee, 2),
-        "tax_fee": round(tax_fee, 2),
-        "final_price": round(final_price, 2),
-        "project_name": project_name,
-        "parse_method": data.get("parse_method", ""),
-        "needs_manual_review": data.get("needs_manual_review", False),
-        "manual_review_reason": data.get("manual_review_reason", ""),
-        "dxf_repair_count": data.get("dxf_repair_count", 0),
-        "measurement_id": data.get("measurement_id"),
-        "source_format": data.get("source_format", ext.lstrip(".")),
-    }
-
-    return ok(result, task_status=STATE_IDLE, trace_id=tid)
-
-
-# ─────────────────── 接口：清理临时上传文件 ───────────────────
 
 @app.post("/api/upload/clear")
 async def upload_clear():
-    """清空前端未提交的临时上传文件"""
+    """清理预览、识别和测试流程产生的临时上传文件。"""
     if task_state.state != STATE_IDLE:
-        return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
-    import time
-    now = time.time()
+        return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
+
     deleted = 0
-    for f in UPLOAD_DIR.iterdir():
-        # 遍历uploads，筛选并删除需要删除的人工标注相关临时文件
-        if f.is_file() and (
-            f.name.endswith('_measurement.json')
-            or f.name.endswith('_measurement.tmp')
-            or f.name.endswith('.measurement.json.gz')
-        ):
-            f.unlink(missing_ok=True)
-            deleted += 1
+    temporary_suffixes = {
+        ".dxf", ".dwg", ".pdf", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+        ".json", ".gz", ".tmp",
+    }
+    for path in list(UPLOAD_DIR.iterdir()):
+        if path.is_dir():
+            if path.name.endswith("_crops"):
+                cleanup_upload_work_paths(path)
+                deleted += 1
             continue
-        if f.is_file() and f.suffix.lower() in ('.dxf', '.dwg', '.jpg', '.jpeg', '.png', '.webp'):
-            fname = f.name
-            # 只删文件名不含数据库记录ID标记的临时文件（上传但未解析的）
-            if not any(id_prefix in fname for id_prefix in ['_cad', '_img', '_test', '_processed']):
-                f.unlink(missing_ok=True)
-                deleted += 1
-            # 也删掉被reset标记的临时文件
-            elif fname.startswith('temp_'):
-                f.unlink(missing_ok=True)
-                deleted += 1
+        if not path.is_file():
+            continue
+        if path.suffix.lower() in temporary_suffixes or path.name.endswith(".measurement.json.gz"):
+            cleanup_upload_work_paths(path)
+            deleted += 1
     return ok({"deleted_count": deleted})
 
-
-# ─────────────────── 接口：效果图识别（接口2） ───────────────────
 
 @app.post("/api/analyze")
 async def analyze_image(
     image_file: UploadFile = File(None),
 ):
-    """
-    接口2：单张效果图材质/空间同步识别
-    入参：image_file=@效果图.jpg
-    能力：LLaVA识别材质、空间、软装
-    状态约束：仅idle可调用，占用ai_running锁
-    """
+    """Recognize a single effect image and remove parser work files after use."""
     if not image_file:
-        return err(400, "请上传效果图（jpg/png/webp）")
+        return err(400, "\u8bf7\u4e0a\u4f20\u6548\u679c\u56fe\uff08jpg/png/webp\uff09")
 
-    content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "图片")
+    content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "\u56fe\u7247")
 
     task_id = uuid.uuid4().hex[:12]
     save_path = UPLOAD_DIR / f"{task_id}_img{ext}"
+    processed_path = None
     save_path.write_bytes(content)
 
-    # ── 图片预处理：缩放/压缩/去EXIF ──
-    processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
-    stats = preprocess_image_stats(str(save_path), processed_path)
-    print(f"[image_preprocessor] {image_file.filename}: "
-          f"{stats['original_size_kb']}KB -> {stats['processed_size_kb']}KB "
-          f"({stats['compression_ratio']}% reduction)")
+    try:
+        processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
+        stats = preprocess_image_stats(str(save_path), processed_path)
+        print(f"[image_preprocessor] {image_file.filename}: "
+              f"{stats['original_size_kb']}KB -> {stats['processed_size_kb']}KB "
+              f"({stats['compression_ratio']}% reduction)")
 
-    # 读取当前配置的视觉模型
-    settings = await db.get_settings()
-    vl_model = settings.get("active_vl_model", "llava:7b")
+        settings = await db.get_settings()
+        vl_model = settings.get("active_vl_model", "llava:7b")
 
-    # 从数据库查询自定义模型的完整配置
-    custom_models = await db.get_custom_vl_models()
-    model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
-    model_type = model_info.get("model_type") if model_info else None
-    api_base_url = model_info.get("api_base_url") if model_info else None
-    api_token = model_info.get("api_token") if model_info else None
+        custom_models = await db.get_custom_vl_models()
+        model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
+        model_type = model_info.get("model_type") if model_info else None
+        api_base_url = model_info.get("api_base_url") if model_info else None
+        api_token = model_info.get("api_token") if model_info else None
 
-    data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback,
-                                      processed_path, vl_model,
-                                      model_type=model_type,
-                                      api_base_url=api_base_url,
-                                      api_token=api_token)
+        data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback,
+                                          processed_path, vl_model,
+                                          model_type=model_type,
+                                          api_base_url=api_base_url,
+                                          api_token=api_token)
 
-    if error:
-        return err(504, f"AI识别失败: {error}", task_status=STATE_IDLE, trace_id=tid)
+        if error:
+            return err(504, f"AI\u8bc6\u522b\u5931\u8d25: {error}", task_status=STATE_IDLE, trace_id=tid)
 
-    if not data:
-        return err(500, "AI识别无结果", task_status=STATE_IDLE, trace_id=tid)
+        if not data:
+            return err(500, "AI\u8bc6\u522b\u65e0\u7ed3\u679c", task_status=STATE_IDLE, trace_id=tid)
 
-    # 解析结构化数据（v2.0格式）
-    structured = data.get("structured", {})
-    recognized_space = structured.get("space_type", "")
-    wall_mat = structured.get("wall_material", "")
-    floor_mat = structured.get("floor_material", "")
-    ceiling_mat = structured.get("ceiling_material", "")
-    decor_style = structured.get("decor_style", "")
-    remark = structured.get("remark", "")
-    model_used = data.get("model_used", vl_model)
-    success = data.get("success", False)
+        structured = data.get("structured", {})
+        recognized_space = structured.get("space_type", "")
+        wall_mat = structured.get("wall_material", "")
+        floor_mat = structured.get("floor_material", "")
+        ceiling_mat = structured.get("ceiling_material", "")
+        decor_style = structured.get("decor_style", "")
+        remark = structured.get("remark", "")
+        model_used = data.get("model_used", vl_model)
+        success = data.get("success", False)
 
-    if not recognized_space and not data.get("error"):
-        # 兼容旧格式：尝试从 spaces[0] 提取
-        spaces_list = data.get("spaces", [])
-        first_space = spaces_list[0] if spaces_list else {}
-        recognized_space = first_space.get("type", first_space.get("space", ""))
-        mats = first_space.get("materials", {})
-        wall_mat = mats.get("wall", wall_mat)
-        floor_mat = mats.get("floor", floor_mat)
-        ceiling_mat = mats.get("ceiling", ceiling_mat)
-        decor_style = data.get("overall_style", decor_style)
+        if not recognized_space and not data.get("error"):
+            spaces_list = data.get("spaces", [])
+            first_space = spaces_list[0] if spaces_list else {}
+            recognized_space = first_space.get("type", first_space.get("space", ""))
+            mats = first_space.get("materials", {})
+            wall_mat = mats.get("wall", wall_mat)
+            floor_mat = mats.get("floor", floor_mat)
+            ceiling_mat = mats.get("ceiling", ceiling_mat)
+            decor_style = data.get("overall_style", decor_style)
 
-    # 构造完整 material_info
-    material_info = {
-        "wall": wall_mat,
-        "floor": floor_mat,
-        "ceiling": ceiling_mat,
-        "style": decor_style,
-        "remark": remark,
-        "model_used": model_used,
-    }
+        material_info = {
+            "wall": wall_mat,
+            "floor": floor_mat,
+            "ceiling": ceiling_mat,
+            "style": decor_style,
+            "remark": remark,
+            "model_used": model_used,
+        }
 
-    confidence = 0.85 if recognized_space else (0.5 if success else 0)
+        confidence = 0.85 if recognized_space else (0.5 if success else 0)
+        #不再把真实图片路径写进数据库，而是写占位值
+        img_id = await db.add_image_result(
+            "[cleared-after-analysis]",
+            recognized_space=recognized_space,
+            material_info=material_info,
+            confidence=confidence,
+        )
 
-    img_id = await db.add_image_result(
-        str(save_path),
-        recognized_space=recognized_space,
-        material_info=material_info,
-        confidence=confidence,
-    )
+        result = {
+            "image_result_id": img_id,
+            "filename": image_file.filename,
+            "recognized_space": recognized_space,
+            "wall_material": wall_mat,
+            "floor_material": floor_mat,
+            "ceiling_material": ceiling_mat,
+            "decor_style": decor_style,
+            "remark": remark,
+            "confidence": confidence,
+            "model_used": model_used,
+            "structured": structured,
+        }
 
-    result = {
-        "image_result_id": img_id,
-        "filename": image_file.filename,
-        "recognized_space": recognized_space,
-        "wall_material": wall_mat,
-        "floor_material": floor_mat,
-        "ceiling_material": ceiling_mat,
-        "decor_style": decor_style,
-        "remark": remark,
-        "confidence": confidence,
-        "model_used": model_used,
-        "structured": structured,
-    }
+        if not success and data.get("error"):
+            result["warning"] = data["error"]
 
-    if not success and data.get("error"):
-        result["warning"] = data["error"]
-
-    return ok(result, task_status=STATE_IDLE, trace_id=tid)
+        return ok(result, task_status=STATE_IDLE, trace_id=tid)
+    finally:
+        # 识别完成后删除源文件及已处理文件
+        cleanup_upload_work_paths(save_path, processed_path)
 
 
-# ─────────────────── 接口：视觉识别独立测试（诊断用） ───────────────────
 @app.post("/api/vision_test")
 async def vision_test(
     image_file: UploadFile = File(None),
     model: str = Form(""),
     crop_enabled: str = Form("true"),
-    data: str = Form(default="{}")  # ✅ 前端 JSON 字符串
+    data: str = Form(default="{}")
 ):
-    logger.info("🚀 /api/vision_test called")
-    logger.info("📷 filename=%s", image_file.filename)
-    logger.info("🧠 raw data param=%s", data)  # ✅ 打字符串，不打 .get()
+    logger.info("/api/vision_test called")
+    if not image_file:
+        return err(400, "\u8bf7\u4e0a\u4f20\u56fe\u7247\uff08jpg/png/webp\uff09")
+    logger.info("vision_test filename=%s", image_file.filename)
+    logger.info("vision_test raw data param=%s", data)
 
-    # ✅ 解析前端传来的 structured 标志（安全）
     structured_flag = False
     try:
         parsed_data = json.loads(data)
         structured_flag = parsed_data.get("structured", False)
-        logger.info("🧠 parsed structured flag=%s", structured_flag)
+        logger.info("vision_test parsed structured flag=%s", structured_flag)
     except Exception as e:
-        logger.warning("⚠️ data JSON 解析失败: %s", e)
+        logger.warning("vision_test data JSON parse failed: %s", e)
 
-    if not image_file:
-        return err(400, "请上传图片（jpg/png/webp）")
-
-    content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "图片")
+    content, ext = await check_file_gate(image_file, MAX_IMG_SIZE, ALLOWED_IMG_EXT, "\u56fe\u7247")
     task_id = uuid.uuid4().hex[:8]
     save_path = UPLOAD_DIR / f"{task_id}_test{ext}"
+    processed_path = None
     save_path.write_bytes(content)
 
-    t_total = time.time()
-    timings = {}
-
-    # 步骤1：图像预处理
-    t0 = time.time()
-    from image_preprocessor import preprocess_image, preprocess_image_stats
-    processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
-    stats = preprocess_image_stats(str(save_path), processed_path)
-    timings["preprocess"] = round(time.time() - t0, 3)
-
-    # 步骤2：模型推理
-    t0 = time.time()
-    from image_recognizer import recognize_with_fallback
-
-    if model:
-        vl_model = model
-    else:
-        settings = await db.get_settings()
-        vl_model = settings.get("active_vl_model", "qwen2.5:7b")
-
-    # 从数据库查询自定义模型的完整配置
-    custom_models = await db.get_custom_vl_models()
-    model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
-    vl_model_type = model_info.get("model_type") if model_info else None
-    vl_api_base_url = model_info.get("api_base_url") if model_info else None
-    vl_api_token = model_info.get("api_token") if model_info else None
-    vl_api_format = model_info.get("api_format") if model_info else None
-
-    use_crop = crop_enabled.lower() in ("true", "1", "yes")
-
-        # ✅ 关键：不要用 data 这个名字存识别结果
-    if use_crop:
-        from crop_recognizer import CropRecognizer
-        recognizer = CropRecognizer(
-            model_type=vl_model_type,
-            api_base_url=vl_api_base_url,
-            api_token=vl_api_token,
-            api_format=vl_api_format,
-        )
-        recognition_result = recognizer.recognize_with_crop(
-            image_path=processed_path,
-            model=vl_model,
-            upload_dir=UPLOAD_DIR,
-            task_id=task_id,
-        )
-    else:
-        recognition_result = recognize_with_fallback(
-            processed_path, vl_model,
-            model_type=vl_model_type,
-            api_base_url=vl_api_base_url,
-            api_token=vl_api_token,
-            api_format=vl_api_format,
-        )
-        recognition_result["_crop_mode"] = "disabled"
-
-    timings["inference"] = round(time.time() - t0, 3)
-    t_total = round(time.time() - t_total, 3)
-
-    from vision_harness.similarity import get_expect_pretect, evaluate_similarity
-
-    # ✅ 从识别结果中取 structured
-    expected, predicted = get_expect_pretect(
-        image_file.filename,
-        recognition_result.get("structured", {})
-    )
-
-    similarity_json = evaluate_similarity(expected, predicted)
-
-    # 清理临时文件
     try:
-        os.remove(save_path)
-        os.remove(processed_path)
-    except Exception:
-        pass
+        t_total = time.time()
+        timings = {}
 
-    try:
-        from db import db as _db
-        settings_data = await _db.get_settings()
-        available = settings_data.get("available_vl_models", [])
-    except Exception:
-        available = []
+        t0 = time.time()
+        from image_preprocessor import preprocess_image, preprocess_image_stats
+        processed_path = preprocess_image(str(save_path), output_dir=str(UPLOAD_DIR))
+        stats = preprocess_image_stats(str(save_path), processed_path)
+        timings["preprocess"] = round(time.time() - t0, 3)
 
-    result = {
-        "timings": {
-            "preprocess": timings["preprocess"],
-            "inference": timings["inference"],
-            "total": t_total,
-        },
-        "model_used": vl_model,
-        "available_models": available,
-        "image_info": {
-            "filename": image_file.filename,
-            "original_size_kb": round(stats["original_size_kb"], 1),
-            "processed_size_kb": round(stats["processed_size_kb"], 1),
-        },
-        "raw_result": recognition_result,
-        "similarity": similarity_json,
-    }
-    logger.info("📤 vision_test response: expected=%s, predicted=%s", expected, predicted)
-    return ok(result)
-   
+        t0 = time.time()
+        from image_recognizer import recognize_with_fallback
+
+        if model:
+            vl_model = model
+        else:
+            settings = await db.get_settings()
+            vl_model = settings.get("active_vl_model", "qwen2.5:7b")
+
+        custom_models = await db.get_custom_vl_models()
+        model_info = next((cm for cm in custom_models if cm["model_key"] == vl_model), None)
+        vl_model_type = model_info.get("model_type") if model_info else None
+        vl_api_base_url = model_info.get("api_base_url") if model_info else None
+        vl_api_token = model_info.get("api_token") if model_info else None
+        vl_api_format = model_info.get("api_format") if model_info else None
+
+        use_crop = crop_enabled.lower() in ("true", "1", "yes")
+
+        if use_crop:
+            from crop_recognizer import CropRecognizer
+            recognizer = CropRecognizer(
+                model_type=vl_model_type,
+                api_base_url=vl_api_base_url,
+                api_token=vl_api_token,
+                api_format=vl_api_format,
+            )
+            recognition_result = recognizer.recognize_with_crop(
+                image_path=processed_path,
+                model=vl_model,
+                upload_dir=UPLOAD_DIR,
+                task_id=task_id,
+            )
+        else:
+            recognition_result = recognize_with_fallback(
+                processed_path, vl_model,
+                model_type=vl_model_type,
+                api_base_url=vl_api_base_url,
+                api_token=vl_api_token,
+                api_format=vl_api_format,
+            )
+            recognition_result["_crop_mode"] = "disabled"
+
+        timings["inference"] = round(time.time() - t0, 3)
+        t_total = round(time.time() - t_total, 3)
+
+        from vision_harness.similarity import get_expect_pretect, evaluate_similarity
+
+        expected, predicted = get_expect_pretect(
+            image_file.filename,
+            recognition_result.get("structured", {})
+        )
+
+        similarity_json = evaluate_similarity(expected, predicted)
+
+        try:
+            from db import db as _db
+            settings_data = await _db.get_settings()
+            available = settings_data.get("available_vl_models", [])
+        except Exception:
+            available = []
+
+        result = {
+            "timings": {
+                "preprocess": timings["preprocess"],
+                "inference": timings["inference"],
+                "total": t_total,
+            },
+            "model_used": vl_model,
+            "available_models": available,
+            "image_info": {
+                "filename": image_file.filename,
+                "original_size_kb": round(stats["original_size_kb"], 1),
+                "processed_size_kb": round(stats["processed_size_kb"], 1),
+            },
+            "raw_result": recognition_result,
+            "similarity": similarity_json,
+        }
+        logger.info("vision_test response: expected=%s, predicted=%s", expected, predicted)
+        return ok(result)
+    finally:
+        # 测试图像和裁剪调试文件均为临时文件，不得在运行失败后继续留存。
+        cleanup_upload_work_paths(save_path, processed_path)
+        cleanup_upload_task_artifacts(task_id)
+
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
-    """PDF施工图识别：PDF→图片→复用LLaVA识别"""
+    """识别 PDF 施工图；转换出的分页图片只作为临时文件使用。"""
     if not pdf_file:
-        return err(400, "请上传PDF文件")
+        return err(400, "\u8bf7\u4e0a\u4f20PDF\u6587\u4ef6")
 
     content, ext = await check_file_gate(pdf_file, MAX_PDF_SIZE, ALLOWED_PDF_EXT, "PDF")
 
     import fitz  # PyMuPDF
     task_id = uuid.uuid4().hex[:12]
     pdf_path = UPLOAD_DIR / f"{task_id}_src.pdf"
+    pages = []
+    processed_pages = []
+    tid = ""
+    doc = None
     pdf_path.write_bytes(content)
 
-    # 逐页转图
-    doc = fitz.open(str(pdf_path))
-    pages = []
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        mat = fitz.Matrix(2, 2)  # 2x缩放 提高清晰度
-        pix = page.get_pixmap(matrix=mat)
-        img_path = UPLOAD_DIR / f"{task_id}_p{page_num}.jpg"
-        pix.save(str(img_path))
-        pages.append(str(img_path))
-    doc.close()
+    try:
+        doc = fitz.open(str(pdf_path))
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(matrix=mat)
+            img_path = UPLOAD_DIR / f"{task_id}_p{page_num}.jpg"
+            pix.save(str(img_path))
+            pages.append(str(img_path))
 
-    if not pages:
-        return err(400, "PDF为空或无法渲染")
+        if not pages:
+            return err(400, "PDF\u4e3a\u7a7a\u6216\u65e0\u6cd5\u6e32\u67d3")
 
-    # 对每一页做识别（只认第一页返回详细结构，其余统计）
-    settings = await db.get_settings()
-    vl_model = settings.get("active_vl_model", "llava:7b")
+        settings = await db.get_settings()
+        vl_model = settings.get("active_vl_model", "llava:7b")
 
-    results = []
-    for i, img_path in enumerate(pages):
-        processed = preprocess_image(img_path, output_dir=str(UPLOAD_DIR))
-        data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback, processed, vl_model)
-        page_result = {
-            "page": i + 1,
+        results = []
+        for i, img_path in enumerate(pages):
+            processed = preprocess_image(img_path, output_dir=str(UPLOAD_DIR))
+            processed_pages.append(processed)
+            data, tid, error = await safe_run("ai", TIMEOUT_AI, recognize_with_fallback, processed, vl_model)
+            page_result = {
+                "page": i + 1,
+                "total_pages": len(pages),
+            }
+            if error:
+                page_result["error"] = error
+            elif data:
+                structured = data.get("structured", {})
+                page_result["recognized_space"] = structured.get("space_type", "")
+                page_result["wall_material"] = structured.get("wall_material", "")
+                page_result["floor_material"] = structured.get("floor_material", "")
+                page_result["ceiling_material"] = structured.get("ceiling_material", "")
+                page_result["confidence"] = data.get("success", False)
+            results.append(page_result)
+
+        return ok({
+            "filename": pdf_file.filename,
             "total_pages": len(pages),
-        }
-        if error:
-            page_result["error"] = error
-        elif data:
-            structured = data.get("structured", {})
-            page_result["recognized_space"] = structured.get("space_type", "")
-            page_result["wall_material"] = structured.get("wall_material", "")
-            page_result["floor_material"] = structured.get("floor_material", "")
-            page_result["ceiling_material"] = structured.get("ceiling_material", "")
-            page_result["confidence"] = data.get("success", False)
-        results.append(page_result)
-
-    return ok({
-        "filename": pdf_file.filename,
-        "total_pages": len(pages),
-        "results": results,
-    }, task_status=STATE_IDLE, trace_id=tid)
+            "results": results,
+        }, task_status=STATE_IDLE, trace_id=tid)
+    finally:
+        if doc is not None:
+            doc.close()
+        # PDF 识别会生成源 PDF、分页图和预处理图，接口结束后都必须清理。
+        cleanup_upload_work_paths(pdf_path, *pages, *processed_pages)
 
 
-# ─────────────────── 接口：CAD 解析误差评估（对比真实值） ───────────────────
-    
 @app.post("/api/cad_test")
 async def cad_test(
     cad_result: str = Form(""),
@@ -1378,7 +1354,7 @@ async def data_merge(
     try:
         ok_flag, tid = await task_state.acquire("merge")
         if not ok_flag:
-            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+            return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
 
         # 执行融合逻辑
         total_area = sum(r.get("area", 0) for r in cad_rows)
@@ -1693,7 +1669,7 @@ async def update_quote_items(quote_id: int, body: dict):
     try:
         ok_flag, tid = await task_state.acquire("merge")
         if not ok_flag:
-            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+            return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
 
         updated = body.get("items", [])
         if not updated:
@@ -1827,7 +1803,7 @@ async def export_excel(
     try:
         ok_flag, tid = await task_state.acquire("export")
         if not ok_flag:
-            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+            return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
 
         # 读取CAD数据补充到Excel
         cad_rows = await db.get_cad_results(quote.get("cad_result_id", 0))
@@ -1976,7 +1952,7 @@ async def history_detail(task_id: int):
 async def history_delete(task_id: int):
     """删除历史记录（逻辑删除，仅空闲可执行）"""
     if task_state.state != STATE_IDLE:
-        return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+        return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
     await db.execute("UPDATE quote_records SET is_deleted=1 WHERE id=?", (task_id,))
     return ok({"deleted_id": task_id})
 
@@ -2977,7 +2953,7 @@ async def export_process_quote(
     try:
         ok_flag, tid = await task_state.acquire("export")
         if not ok_flag:
-            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+            return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
 
         cad_rows = await db.get_cad_results(quote.get("cad_result_id", 0))
 

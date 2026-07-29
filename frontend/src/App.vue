@@ -195,8 +195,6 @@
               </svg>
               {{ loading ? '⏳ 执行中...' : '🚀 开始分析' }}
             </button>
-            <button v-if="cadFile || imageFile" class="btn-secondary text-sm" @click="clearFiles">清空重选</button>
-
             <!-- 状态提示 -->
             <div v-if="sysStatus" class="flex items-center gap-3 ml-auto">
               <span class="text-xs text-gray-400">系统: {{ sysStatus.task_state }}</span>
@@ -559,19 +557,30 @@ const sysStatusText = computed(() => {
   return `${t.task_state} | LLaVA: ${t.llava_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
 })
 
-function onCadFileChange(f) {
+// 通知后端清理当前会话产生的上传临时文件；失败不打断用户操作。
+async function clearServerUploadsQuietly() {
+  try { await API.post('/upload/clear', {}) } catch (e) {}
+}
+
+async function onCadFileChange(f) {
+  if (cadFile.value && cadFile.value !== f) await clearServerUploadsQuietly()
   cadFile.value = f
   cadDone.value = !!f
+  cadResult.value = null
   clearSavedMeasurementResult()
+  analysisDone.value = false
 }
-function onImageFileChange(f) {
+async function onImageFileChange(f) {
+  if (imageFile.value && imageFile.value !== f) await clearServerUploadsQuietly()
   imageFile.value = f
   imgDone.value = !!f
+  imageResult.value = null
   if (f) {
     imagePreviewUrl.value = URL.createObjectURL(f)
   } else {
     imagePreviewUrl.value = ''
   }
+  analysisDone.value = false
 }
 function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
@@ -584,7 +593,7 @@ function onQueueResults(results) {
 async function clearFiles() {
   // 后端同步删除临时文件
   try {
-    await API.post('/upload/clear', {})
+    await clearServerUploadsQuietly()
   } catch (e) { /* 静默处理 */ }
   cadFile.value = null
   imageFile.value = null
@@ -616,8 +625,10 @@ async function closeCadPreview() {
   // 先显式销毁引擎，再隐藏 overlay
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
   if (cadMeasurementPreviewFile.value) {
-    try { await API.post('/upload/clear', {}) } catch (e) {}
-  } // 关闭人工标注面板时，通知后端清理临时上传文件，覆盖“用户打开了人工标注但没保存就关闭”的情况
+    await clearServerUploadsQuietly()
+  }
+  // 未保存就关闭人工标注时，清掉挂起回调，避免后续保存结果串到旧测试文件。
+  pendingCadCallback.value = null
   showCadPreview.value = false
   cadPreviewFile.value = null
   cadMeasurementPreviewFile.value = null
@@ -636,9 +647,10 @@ function onCadAnnotate(fileObj) {
 }
 
 function onMeasurementSaved(result) {
-  // 标注结果只保留在当前页面会话；回调只通知测试面板“已标注”，不再传递后端临时 ID。
+  // 标注结果只保留在当前页面会话；回传给测试面板后，测试入口才能人工结果优先。
   if (pendingCadCallback.value) {
-    pendingCadCallback.value()
+    // 人工标注结果回传至测试面板。
+    pendingCadCallback.value(result)
     pendingCadCallback.value = null
   }
 

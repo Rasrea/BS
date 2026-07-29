@@ -643,6 +643,11 @@ import { ref, computed, onMounted } from 'vue'
 import API from '../services/api.js'
 const emit = defineEmits(['cad-preview', 'cad-annotate'])  // cad标注按钮
 
+// 测试面板独立于主页面上传区，清空测试文件时也要通知后端删除临时上传文件。
+async function clearServerUploadsQuietly() {
+  try { await API.post('/upload/clear', {}) } catch (e) {}
+}
+
 const files = ref([])
 const testing = ref(false)
 const results = ref([])
@@ -957,7 +962,8 @@ function onFilesChange(e) {
   e.target.value = ''
 }
 
-function clearAll() {
+async function clearAll() {
+  await clearServerUploadsQuietly()
   files.value.forEach(f => URL.revokeObjectURL(f.url))
   files.value = []
   results.value = []
@@ -1155,14 +1161,17 @@ function onCadFilesChange(e) {
     testing: false,
     groundTruth: null,
     groundTruthData: null,
+    //测试面板保存人工结果
     hasAnnotation: false,
+    manualMeasurement: null,
   }))
   cadResults.value = []
   e.target.value = ''
 }
 
 // 清空 CAD 文件列表
-function clearCadFiles() {
+async function clearCadFiles() {
+  await clearServerUploadsQuietly()
   cadFiles.value = []
   cadResults.value = []
 }
@@ -1178,8 +1187,9 @@ function annotateCadFile(cadFileObj) {
   emit('cad-annotate', {
     file: cadFileObj.file,
     filename: cadFileObj.name,
-    callback: () => {
+    callback: (measurementResult) => {
       cadFileObj.hasAnnotation = true
+      cadFileObj.manualMeasurement = measurementResult || null
     }
   })
 }
@@ -1260,10 +1270,15 @@ async function startCadBatchTest() {
   for (const f of cadFiles.value) {
     f.testing = true
     f.showRaw = false
-    
+
+    //测试面板提交人工结果
     const fd = new FormData()
     fd.append('cad_file', f.file)
     fd.append('project_name', 'CAD 测试工程')
+    // 测试入口与主流程一致：有人工标注结果时，后端优先使用人工面积。
+    if (f.manualMeasurement) {
+      fd.append('manual_measurement', JSON.stringify(f.manualMeasurement))
+    }
     
     try {
       const res = await API.post('/analyze_full', fd, { timeout: 120000 })
