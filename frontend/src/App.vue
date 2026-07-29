@@ -663,9 +663,12 @@ async function startAnalysis() {
     await sleep(100)
 
     const t0 = Date.now()
+    // 当前图纸已有人工标注时，开始分析必须优先采用人工面积结果；没有才让后端自动识别。
+    const manualMeasurement = savedMeasurementMatches(cadFile.value) ? savedMeasurementResult.value : null
     cadResult.value = await API.analyzeCad(
       cadFile.value,
       projectName.value,
+      manualMeasurement,
     )
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
     setStepDone('📤 上传CAD文件...', dur)

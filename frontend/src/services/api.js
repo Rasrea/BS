@@ -28,12 +28,12 @@ export const API = {
   },
 
   // === CAD解析 (接口1) ===
-  async analyzeCad(file, projectName = '装修工程', measurementId = null) {
+  async analyzeCad(file, projectName = '装修工程', manualMeasurement = null) {
     try {
       const fd = new FormData()
       fd.append('cad_file', file)
       if (projectName) fd.append('project_name', projectName)
-      if (measurementId) fd.append('measurement_id', measurementId)
+      if (manualMeasurement) fd.append('manual_measurement', JSON.stringify(manualMeasurement))// 人工优先、无人工再自动
       const { data } = await api.post('/analyze_full', fd, { timeout: 120000 })
       return data
     } catch (e) { return handleError(e) }

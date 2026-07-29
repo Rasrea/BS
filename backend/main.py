@@ -785,6 +785,7 @@ async def analyze_full(
     cad_file: UploadFile = File(None),
     quote_db: str = Form(None),
     project_name: str = Form("装修工程"),
+    manual_measurement: str = Form(None),
     measurement_id: str = Form(None),
 ):
     """
@@ -809,30 +810,35 @@ async def analyze_full(
 
     error = None              # 错误信息容器
     tid = ""                  # 用于后续日志和调试追踪
-    saved_measurement = None  # ← 哨兵变量
-    
-    # 步骤A：判断是否有人工标注数据
-    if measurement_id:        
-        source_format = ext.lstrip(".")
-        annotation_capability(source_format)
-        saved_measurement = load_saved_measurement(measurement_id, content)
-        if saved_measurement.get("source_format", "dxf") != source_format:
-            raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
+    if measurement_id:
+        # 人工标注结果已改为前端会话态，不再从服务端临时 JSON 读取；旧客户端参数直接忽略，避免误报“结果不存在”。
+        logger.info("Ignoring legacy measurement_id during CAD analysis: %s", measurement_id)
 
-    # 步骤B：走人工标注路径（跳过CAD解析）
-    if saved_measurement:
+    if manual_measurement:
+        try:
+            saved_measurement = json.loads(manual_measurement)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="人工面积结果格式无效，请重新标注") from exc
+        # 人工结果来自前端会话态；用源文件哈希校验，防止切换图纸后误用旧标注。
+        if saved_measurement.get("source_file_hash") != file_sha256(content):
+            raise HTTPException(status_code=409, detail="人工面积结果与当前图纸不匹配，请重新标注")
+        if saved_measurement.get("source_format", ext.lstrip(".")) != ext.lstrip("."):
+            raise HTTPException(status_code=409, detail="人工面积结果的文件格式与当前图纸不匹配")
+        spaces = saved_measurement.get("spaces") or []
+        if not spaces:
+            raise HTTPException(status_code=422, detail="人工面积结果为空，请重新标注")
         data = {
-            "spaces": saved_measurement["spaces"],  # 从已有测量结果中提取房间空间列表
-            "parse_method": "人工标注面积",          # 解析方法标记为"人工标注面积"
-            "needs_manual_review": False,           # 是否需要人工复核：否（因为人工标注本身就是经过确认的）
-            "manual_review_reason": "",             # 人工复核原因：空（不需要复核）
-            "dxf_repair_count": 0,                  # DXF 修复次数：0（无需修复）
-            "measurement_id": measurement_id,       # 测量 ID（图纸编号）
-            "source_format": source_format,         # 源文件格式
+            "spaces": spaces,
+            "parse_method": "人工标注面积",
+            "needs_manual_review": False,
+            "manual_review_reason": "",
+            "dxf_repair_count": 0,
+            "measurement_id": saved_measurement.get("measurement_id"),
+            "source_format": saved_measurement.get("source_format", ext.lstrip(".")),
         }
         tid = datetime.now().strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
 
-    # 步骤C：正常CAD解析（measurement_id 为 None）
+    # 没有人工标注结果时，才进入自动CAD/PDF识别。
     elif ext == ".pdf":
         from pdf_parser import parse_pdf_vector
         from cad_parser import _parse_cad_pdf
