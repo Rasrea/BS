@@ -503,7 +503,7 @@ async function loadMeasurementFile(selected, initialSpaces = [], reviewReason = 
     .filter(room => room.vertices.every(point => point.every(Number.isFinite)) && localArea(room.vertices) > 0)
   roomName.value = `房间${rooms.value.length + 1}`
   autoReviewMessage.value = rooms.value.length
-    ? `已载入 ${rooms.value.length} 个自动标注区域，可直接选择、调整或删除。${reviewReason || ''}`
+    ? `已载入 ${rooms.value.length} 个已有标注区域，可直接选择、调整或删除。${reviewReason || ''}`
     : reviewReason
   selectedViewId.value = response.data.active_view_id || 'all'
   // 默认使用能力表明确配置的默认单位，不再把未知单位自动当作毫米。

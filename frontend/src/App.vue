@@ -312,7 +312,7 @@
           :active="true"
           :embedded="true"
           :initial-file="cadMeasurementPreviewFile"
-          :initial-spaces="savedMeasurementResult?.spaces || cadResult?.data?.spaces || []"
+          :initial-spaces="savedMeasurementResult?.spaces || []"
           :review-reason="cadResult?.data?.manual_review_reason || ''"
           @close="closeCadPreview"
           @saved="onMeasurementSaved"
