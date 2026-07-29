@@ -307,6 +307,23 @@ def measurement_result_path(drawing_id: str) -> Path:
 def file_sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
+# 清理人工标注流程产生的服务端临时文件
+def cleanup_measurement_work_files(drawing_id: str, source_format: str = "dxf") -> None:
+    """Remove per-session manual annotation files after the result is returned."""
+    try:
+        source_path = measurement_file_path(drawing_id, source_format)
+        cache_path = source_path.with_suffix(source_path.suffix + ".measurement.json.gz")
+        result_path = measurement_result_path(drawing_id)
+        for path in (
+            source_path,
+            cache_path,
+            result_path,
+            result_path.with_suffix(".tmp"),
+        ):
+            path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception("Manual measurement temporary cleanup failed")
+
 
 def load_saved_measurement(drawing_id: str, source_content: bytes) -> dict:
     result_path = measurement_result_path(drawing_id)
@@ -679,6 +696,7 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
     """
     
     save_path = measurement_file_path(payload.drawing_id, payload.source_format)
+    source_file_hash = file_sha256(save_path.read_bytes())
     try:
         # 计算房间的面积、周长等几何数据
         measurement = calculate_measurement_source(payload, str(save_path))
@@ -722,7 +740,7 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
     result = {
         "measurement_id": payload.drawing_id,           # 测量ID（图纸编号）
         "source_format": payload.source_format,         # 源文件格式（如"dxf"）
-        "source_file_hash": file_sha256(save_path.read_bytes()),  # 源文件的SHA256哈希值
+        "source_file_hash": source_file_hash,  # 源文件的SHA256哈希值
         "saved_at": datetime.now().isoformat(),         # 保存时间戳（ISO格式）
         "spaces": spaces,                               # 空间列表（房间详情）
         "space_count": len(spaces),                     # 空间总数
@@ -734,11 +752,8 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
         "unit_source": measurement["unit_source"],      # 单位来源（如"DXF头部信息"）
     }
     
-    # 原子写入文件
-    result_path = measurement_result_path(payload.drawing_id)
-    temp_path = result_path.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-    temp_path.replace(result_path)
+    # Manual annotation results are session-only; remove the uploaded work copy after returning data.
+    cleanup_measurement_work_files(payload.drawing_id, payload.source_format)
     
     return result
 
@@ -747,20 +762,20 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
 async def save_dxf_measurement(payload: DxfMeasurementRequest):
     """校验并保存人工面积结果，不执行计价或覆盖正式分析记录。"""
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
 
 
 @app.post("/api/dxf/measurement/save", deprecated=True)
 async def save_legacy_dxf_measurement(payload: DxfMeasurementRequest):
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
 
 
 @app.post("/api/dxf/measurement/apply", deprecated=True)
 async def apply_dxf_measurement(payload: DxfMeasurementRequest):
     """兼容旧客户端；仅保存面积结果，不再执行计价。"""
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已保存，请点击开始分析继续计价", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
 
 
 # ─────────────────── 接口：CAD解析+报价（接口1） ───────────────────
@@ -928,7 +943,12 @@ async def upload_clear():
     now = time.time()
     deleted = 0
     for f in UPLOAD_DIR.iterdir():
-        if f.is_file() and (f.name.endswith('_measurement.json') or f.name.endswith('_measurement.tmp')):
+        # 遍历uploads，筛选并删除需要删除的人工标注相关临时文件
+        if f.is_file() and (
+            f.name.endswith('_measurement.json')
+            or f.name.endswith('_measurement.tmp')
+            or f.name.endswith('.measurement.json.gz')
+        ):
             f.unlink(missing_ok=True)
             deleted += 1
             continue

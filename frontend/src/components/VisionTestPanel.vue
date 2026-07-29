@@ -277,7 +277,7 @@
               <span class="text-[10px] text-gray-400">{{ f.file ? (f.file.size / 1024).toFixed(1) + ' KB' : '' }}</span>
               <span v-if="isDxfFile(f.name)" class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded">可预览</span>
               <span v-if="f.groundTruth" class="text-[10px] px-1.5 py-0.5 bg-green-100 text-green-600 rounded">✓ 已关联真实值</span>
-              <span v-if="f.measurementId" 
+              <span v-if="f.hasAnnotation"
                     class="text-[10px] px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded">
                 ✏️ 已标注
               </span>
@@ -1155,7 +1155,7 @@ function onCadFilesChange(e) {
     testing: false,
     groundTruth: null,
     groundTruthData: null,
-    measurementId: null,   // ← 新增：人工标注的 drawing_id
+    hasAnnotation: false,
   }))
   cadResults.value = []
   e.target.value = ''
@@ -1178,8 +1178,7 @@ function annotateCadFile(cadFileObj) {
   emit('cad-annotate', {
     file: cadFileObj.file,
     filename: cadFileObj.name,
-    callback: (drawingId) => {
-      cadFileObj.measurementId = drawingId
+    callback: () => {
       cadFileObj.hasAnnotation = true
     }
   })
@@ -1266,11 +1265,6 @@ async function startCadBatchTest() {
     fd.append('cad_file', f.file)
     fd.append('project_name', 'CAD 测试工程')
     
-    // 如果该文件有已保存的人工标注，传递 measurement_id
-    if (f.measurementId) {
-      fd.append('measurement_id', f.measurementId)
-    }
-
     try {
       const res = await API.post('/analyze_full', fd, { timeout: 120000 })
       

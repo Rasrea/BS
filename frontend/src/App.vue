@@ -149,10 +149,11 @@
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
+            <!-- 只有当前 cadFile 和保存标注时的文件签名一致，才显示标注数量。 -->
             <CadUploader
               :review-hint="!!cadResult?.data?.needs_manual_review"
               :review-reason="cadResult?.data?.manual_review_reason || ''"
-              :annotation-count="savedMeasurementResult?.space_count || 0"
+              :annotation-count="currentSavedMeasurementCount"
               @file-change="onCadFileChange"
               @preview="openAnalysisPreview"
             />
@@ -307,12 +308,13 @@
     <!-- 全屏 CAD 预览 -->
     <Teleport to="body">
       <div v-if="showCadPreview" class="cad-preview-overlay">
+        <!-- 只有当前标注图纸匹配已保存结果时，才回显之前标过的房间区域。 -->
         <DxfMeasurementPanel
           v-if="cadMeasurementPreviewFile"
           :active="true"
           :embedded="true"
           :initial-file="cadMeasurementPreviewFile"
-          :initial-spaces="savedMeasurementResult?.spaces || []"
+          :initial-spaces="currentSavedMeasurementResult?.spaces || []"
           :review-reason="cadResult?.data?.manual_review_reason || ''"
           @close="closeCadPreview"
           @saved="onMeasurementSaved"
@@ -408,7 +410,32 @@ const showCadPreview = ref(false)
 const cadPreviewFile = ref(null)
 const cadMeasurementPreviewFile = ref(null)
 const savedMeasurementResult = ref(null)
+// 保存“这份标注结果属于哪张图纸”的身份标识。
+const savedMeasurementFileSignature = ref('')
+
 const cadViewerRef = ref(null)
+// 给当前文件生成一个简单签名
+function fileSignature(file) {
+  return file ? `${file.name}|${file.size}|${file.lastModified || 0}` : ''
+}
+// 清掉当前页面里保存的人工标注结果
+function clearSavedMeasurementResult() {
+  savedMeasurementResult.value = null
+  savedMeasurementFileSignature.value = ''
+}
+// 判断某个文件是否匹配当前保存的标注结果。
+function savedMeasurementMatches(file) {
+  return !!savedMeasurementResult.value
+    && savedMeasurementFileSignature.value === fileSignature(file)
+}
+// 给人工标注面板用，避免新图纸继承旧图纸的房间区域
+const currentSavedMeasurementResult = computed(() => (
+  savedMeasurementMatches(cadMeasurementPreviewFile.value) ? savedMeasurementResult.value : null
+))
+// 给主界面的标注数量显示用，避免新图纸显示上一张图纸的标注数量
+const currentSavedMeasurementCount = computed(() => (
+  savedMeasurementMatches(cadFile.value) ? savedMeasurementResult.value?.space_count || 0 : 0
+))
 
 // ⏳ 启动加载
 const appLoading = ref(true)
@@ -535,7 +562,7 @@ const sysStatusText = computed(() => {
 function onCadFileChange(f) {
   cadFile.value = f
   cadDone.value = !!f
-  savedMeasurementResult.value = null
+  clearSavedMeasurementResult()
 }
 function onImageFileChange(f) {
   imageFile.value = f
@@ -564,7 +591,7 @@ async function clearFiles() {
   cadResult.value = null
   imageResult.value = null
   imagePreviewUrl.value = ''
-  savedMeasurementResult.value = null
+  clearSavedMeasurementResult()
   cadDone.value = false
   imgDone.value = false
   analysisDone.value = false
@@ -574,6 +601,7 @@ async function clearFiles() {
 // CAD 图纸预览
 function openAnalysisPreview() {
   if (!canAnnotate(cadFile.value)) return
+  if (!savedMeasurementMatches(cadFile.value)) clearSavedMeasurementResult() // 在打开人工标注入口前做一次“旧标注防串图”检查
   cadMeasurementPreviewFile.value = cadFile.value
   cadPreviewFile.value = null
   showCadPreview.value = true
@@ -584,9 +612,12 @@ function onCadPreview(fileData) {
   showCadPreview.value = true
 }
 
-function closeCadPreview() {
+async function closeCadPreview() {
   // 先显式销毁引擎，再隐藏 overlay
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
+  if (cadMeasurementPreviewFile.value) {
+    try { await API.post('/upload/clear', {}) } catch (e) {}
+  } // 关闭人工标注面板时，通知后端清理临时上传文件，覆盖“用户打开了人工标注但没保存就关闭”的情况
   showCadPreview.value = false
   cadPreviewFile.value = null
   cadMeasurementPreviewFile.value = null
@@ -598,19 +629,21 @@ const pendingCadCallback = ref(null)
 
 function onCadAnnotate(fileObj) {
   pendingCadCallback.value = fileObj.callback || null  // ← 保存 callback
+  if (!savedMeasurementMatches(fileObj.file)) clearSavedMeasurementResult() // 测试面板 / 组件触发人工标注时，判断当前暂存的标注结果是否属于这张图纸
   cadMeasurementPreviewFile.value = fileObj.file
   cadPreviewFile.value = null
   showCadPreview.value = true
 }
 
 function onMeasurementSaved(result) {
-  // 先调用 callback，把 measurement_id（即 drawing_id）传回 VisionTestPanel
+  // 标注结果只保留在当前页面会话；回调只通知测试面板“已标注”，不再传递后端临时 ID。
   if (pendingCadCallback.value) {
-    pendingCadCallback.value(result.measurement_id)
+    pendingCadCallback.value()
     pendingCadCallback.value = null
   }
 
   savedMeasurementResult.value = result
+  savedMeasurementFileSignature.value = fileSignature(cadMeasurementPreviewFile.value) // 在保存人工标注成功后，把这份标注结果绑定到当前图
   analysisDone.value = false
   closeCadPreview()  // ← 注意：closeCadPreview 里会清掉 cadMeasurementPreviewFile，但 callback 已提前调用
 }
@@ -633,7 +666,6 @@ async function startAnalysis() {
     cadResult.value = await API.analyzeCad(
       cadFile.value,
       projectName.value,
-      savedMeasurementResult.value?.measurement_id || null,
     )
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
     setStepDone('📤 上传CAD文件...', dur)
