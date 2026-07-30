@@ -149,10 +149,11 @@
         <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
+            <!-- 只有当前 cadFile 和保存标注时的文件签名一致，才显示标注数量。 -->
             <CadUploader
               :review-hint="!!cadResult?.data?.needs_manual_review"
               :review-reason="cadResult?.data?.manual_review_reason || ''"
-              :annotation-count="savedMeasurementResult?.space_count || 0"
+              :annotation-count="currentSavedMeasurementCount"
               @file-change="onCadFileChange"
               @preview="openAnalysisPreview"
             />
@@ -194,8 +195,6 @@
               </svg>
               {{ loading ? '⏳ 执行中...' : '🚀 开始分析' }}
             </button>
-            <button v-if="cadFile || imageFile" class="btn-secondary text-sm" @click="clearFiles">清空重选</button>
-
             <!-- 状态提示 -->
             <div v-if="sysStatus" class="flex items-center gap-3 ml-auto">
               <span class="text-xs text-gray-400">系统: {{ sysStatus.task_state }}</span>
@@ -307,12 +306,13 @@
     <!-- 全屏 CAD 预览 -->
     <Teleport to="body">
       <div v-if="showCadPreview" class="cad-preview-overlay">
+        <!-- 只有当前标注图纸匹配已保存结果时，才回显之前标过的房间区域。 -->
         <DxfMeasurementPanel
           v-if="cadMeasurementPreviewFile"
           :active="true"
           :embedded="true"
           :initial-file="cadMeasurementPreviewFile"
-          :initial-spaces="savedMeasurementResult?.spaces || cadResult?.data?.spaces || []"
+          :initial-spaces="currentSavedMeasurementResult?.spaces || emptyInitialSpaces"
           :review-reason="cadResult?.data?.manual_review_reason || ''"
           @close="closeCadPreview"
           @saved="onMeasurementSaved"
@@ -350,7 +350,7 @@ import ComparisonPanel from './components/ComparisonPanel.vue'
 import StandardReport from './components/StandardReport.vue'
 import CadViewer from './components/CadViewer.vue'
 import DxfMeasurementPanel from './components/DxfMeasurementPanel.vue'
-import { canAnnotate } from './utils/annotationCapabilities.js'
+import { canAnnotate, setAnnotationCapabilities } from './utils/annotationCapabilities.js'
 
 const tabs = [
   { key: 'home', label: '📐 图纸分析' },
@@ -408,7 +408,34 @@ const showCadPreview = ref(false)
 const cadPreviewFile = ref(null)
 const cadMeasurementPreviewFile = ref(null)
 const savedMeasurementResult = ref(null)
+// 保存“这份标注结果属于哪张图纸”的身份标识。
+const savedMeasurementFileSignature = ref('')
+// 给人工标注面板传稳定空数组，避免父组件重渲染时误触发子组件重新加载。
+const emptyInitialSpaces = []
+
 const cadViewerRef = ref(null)
+// 给当前文件生成一个简单签名
+function fileSignature(file) {
+  return file ? `${file.name}|${file.size}|${file.lastModified || 0}` : ''
+}
+// 清掉当前页面里保存的人工标注结果
+function clearSavedMeasurementResult() {
+  savedMeasurementResult.value = null
+  savedMeasurementFileSignature.value = ''
+}
+// 判断某个文件是否匹配当前保存的标注结果。
+function savedMeasurementMatches(file) {
+  return !!savedMeasurementResult.value
+    && savedMeasurementFileSignature.value === fileSignature(file)
+}
+// 给人工标注面板用，避免新图纸继承旧图纸的房间区域
+const currentSavedMeasurementResult = computed(() => (
+  savedMeasurementMatches(cadMeasurementPreviewFile.value) ? savedMeasurementResult.value : null
+))
+// 给主界面的标注数量显示用，避免新图纸显示上一张图纸的标注数量
+const currentSavedMeasurementCount = computed(() => (
+  savedMeasurementMatches(cadFile.value) ? savedMeasurementResult.value?.space_count || 0 : 0
+))
 
 // ⏳ 启动加载
 const appLoading = ref(true)
@@ -466,6 +493,13 @@ onMounted(async () => {
   appLoading.value = true
   try {
     sysStatus.value = (await API.getStatus()).data || null
+    // 把后端能力表加载到前端内存，供组件判断功能是否可用，加载失败时保持关闭状态。
+    const capabilityResponse = await API.getMeasurementCapabilities()
+    if (capabilityResponse.success) {
+      setAnnotationCapabilities(capabilityResponse.data?.formats)
+    } else {
+      console.error('人工标注能力配置加载失败:', capabilityResponse.message)
+    }
     await loadVlModels()
   } catch (e) {
     appLoadingError.value = '❌ 后端连接失败: ' + (e.message || '网络异常')
@@ -525,19 +559,30 @@ const sysStatusText = computed(() => {
   return `${t.task_state} | LLaVA: ${t.llava_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
 })
 
-function onCadFileChange(f) {
+// 通知后端清理当前会话产生的上传临时文件；失败不打断用户操作。
+async function clearServerUploadsQuietly() {
+  try { await API.post('/upload/clear', {}) } catch (e) {}
+}
+
+async function onCadFileChange(f) {
+  if (cadFile.value && cadFile.value !== f) await clearServerUploadsQuietly()
   cadFile.value = f
   cadDone.value = !!f
-  savedMeasurementResult.value = null
+  cadResult.value = null
+  clearSavedMeasurementResult()
+  analysisDone.value = false
 }
-function onImageFileChange(f) {
+async function onImageFileChange(f) {
+  if (imageFile.value && imageFile.value !== f) await clearServerUploadsQuietly()
   imageFile.value = f
   imgDone.value = !!f
+  imageResult.value = null
   if (f) {
     imagePreviewUrl.value = URL.createObjectURL(f)
   } else {
     imagePreviewUrl.value = ''
   }
+  analysisDone.value = false
 }
 function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
@@ -550,14 +595,14 @@ function onQueueResults(results) {
 async function clearFiles() {
   // 后端同步删除临时文件
   try {
-    await API.post('/upload/clear', {})
+    await clearServerUploadsQuietly()
   } catch (e) { /* 静默处理 */ }
   cadFile.value = null
   imageFile.value = null
   cadResult.value = null
   imageResult.value = null
   imagePreviewUrl.value = ''
-  savedMeasurementResult.value = null
+  clearSavedMeasurementResult()
   cadDone.value = false
   imgDone.value = false
   analysisDone.value = false
@@ -567,6 +612,7 @@ async function clearFiles() {
 // CAD 图纸预览
 function openAnalysisPreview() {
   if (!canAnnotate(cadFile.value)) return
+  if (!savedMeasurementMatches(cadFile.value)) clearSavedMeasurementResult() // 在打开人工标注入口前做一次“旧标注防串图”检查
   cadMeasurementPreviewFile.value = cadFile.value
   cadPreviewFile.value = null
   showCadPreview.value = true
@@ -577,9 +623,14 @@ function onCadPreview(fileData) {
   showCadPreview.value = true
 }
 
-function closeCadPreview() {
+async function closeCadPreview() {
   // 先显式销毁引擎，再隐藏 overlay
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
+  if (cadMeasurementPreviewFile.value) {
+    await clearServerUploadsQuietly()
+  }
+  // 未保存就关闭人工标注时，清掉挂起回调，避免后续保存结果串到旧测试文件。
+  pendingCadCallback.value = null
   showCadPreview.value = false
   cadPreviewFile.value = null
   cadMeasurementPreviewFile.value = null
@@ -591,19 +642,22 @@ const pendingCadCallback = ref(null)
 
 function onCadAnnotate(fileObj) {
   pendingCadCallback.value = fileObj.callback || null  // ← 保存 callback
+  if (!savedMeasurementMatches(fileObj.file)) clearSavedMeasurementResult() // 测试面板 / 组件触发人工标注时，判断当前暂存的标注结果是否属于这张图纸
   cadMeasurementPreviewFile.value = fileObj.file
   cadPreviewFile.value = null
   showCadPreview.value = true
 }
 
 function onMeasurementSaved(result) {
-  // 先调用 callback，把 measurement_id（即 drawing_id）传回 VisionTestPanel
+  // 标注结果只保留在当前页面会话；回传给测试面板后，测试入口才能人工结果优先。
   if (pendingCadCallback.value) {
-    pendingCadCallback.value(result.measurement_id)
+    // 人工标注结果回传至测试面板。
+    pendingCadCallback.value(result)
     pendingCadCallback.value = null
   }
 
   savedMeasurementResult.value = result
+  savedMeasurementFileSignature.value = fileSignature(cadMeasurementPreviewFile.value) // 在保存人工标注成功后，把这份标注结果绑定到当前图
   analysisDone.value = false
   closeCadPreview()  // ← 注意：closeCadPreview 里会清掉 cadMeasurementPreviewFile，但 callback 已提前调用
 }
@@ -623,10 +677,12 @@ async function startAnalysis() {
     await sleep(100)
 
     const t0 = Date.now()
+    // 当前图纸已有人工标注时，开始分析必须优先采用人工面积结果；没有才让后端自动识别。
+    const manualMeasurement = savedMeasurementMatches(cadFile.value) ? savedMeasurementResult.value : null
     cadResult.value = await API.analyzeCad(
       cadFile.value,
       projectName.value,
-      savedMeasurementResult.value?.measurement_id || null,
+      manualMeasurement,
     )
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
     setStepDone('📤 上传CAD文件...', dur)

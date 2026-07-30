@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import API from '../services/api.js'
 import {
+  annotationCapability, // 引入能力表查询函数
   annotationFileAccept,
   annotationUnavailableReason,
   canAnnotate,
@@ -314,6 +315,14 @@ const sourceFormatLabel = computed(() => {
   const format = drawing.value?.source_format || fileFormat(file.value)
   return format ? format.toUpperCase() : '图纸'
 })
+// 从已经调后端接口拿到前端的能力表中获取当前格式能力，并提取分析决定校准入口、单位覆盖权限和保存前比例确认要求。
+const activeAnnotationCapability = computed(() => (
+  annotationCapability(drawing.value?.source_format || file.value)
+))
+const calibrationPolicy = computed(() => activeAnnotationCapability.value?.calibrationPolicy || 'optional')
+const calibrationAllowed = computed(() => calibrationPolicy.value !== 'none')
+const unitOverrideAllowed = computed(() => activeAnnotationCapability.value?.allowUnitOverride === true)
+const scaleConfirmationRequired = computed(() => drawing.value?.calibration_required === true)
 const roomNameModel = computed({
   get: () => selectedRoom.value?.name ?? roomName.value,
   set: value => {
@@ -494,10 +503,15 @@ async function loadMeasurementFile(selected, initialSpaces = [], reviewReason = 
     .filter(room => room.vertices.every(point => point.every(Number.isFinite)) && localArea(room.vertices) > 0)
   roomName.value = `房间${rooms.value.length + 1}`
   autoReviewMessage.value = rooms.value.length
-    ? `已载入 ${rooms.value.length} 个自动标注区域，可直接选择、调整或删除。${reviewReason || ''}`
+    ? `已载入 ${rooms.value.length} 个已有标注区域，可直接选择、调整或删除。${reviewReason || ''}`
     : reviewReason
   selectedViewId.value = response.data.active_view_id || 'all'
-  unitOverride.value = response.data.unit_confirmed ? '' : 'mm'
+  // 默认使用能力表明确配置的默认单位，不再把未知单位自动当作毫米。
+  const capability = annotationCapability(response.data.source_format || selected)
+  unitOverride.value = !response.data.unit_confirmed && capability?.allowUnitOverride
+    ? capability.defaultUnit || ''
+    : ''
+  if (capability?.calibrationPolicy === 'none' && mode.value === 'calibrate') mode.value = 'select'
   await nextTick()
   fitViewAfterLayout()
 }
@@ -1069,6 +1083,18 @@ async function calculate() {
     error.value = '请在图上选择校准线段的两个端点，并填写大于 0 的真实长度'
     return
   }
+  // 保证安全，防止用户切换文件后，仍然继承上一个文件的校准能力
+  if (calibrationPolicy.value === 'required' && !calibrationMmPerUnit.value) {
+    error.value = `${sourceFormatLabel.value} 必须完成已知长度校准后才能保存`
+    return
+  }
+  const unitConfirmsScale = unitOverrideAllowed.value && !!unitOverride.value
+  if (scaleConfirmationRequired.value && !calibrationMmPerUnit.value && !unitConfirmsScale) {
+    error.value = unitOverrideAllowed.value
+      ? '图纸单位无法确认，请选择正确单位或完成已知长度校准'
+      : '图纸单位无法确认，请完成已知长度校准'
+    return
+  }
   calculating.value = true
   const calibration = calibrationMmPerUnit.value ? {
     start: calibrationPoints.value[0],
@@ -1079,7 +1105,7 @@ async function calculate() {
     drawing.value.drawing_id,
     drawing.value.source_format || 'dxf',
     rooms.value,
-    unitOverride.value || null,
+    unitOverrideAllowed.value ? unitOverride.value || null : null,
     calibration,
   )
   calculating.value = false
@@ -1233,7 +1259,7 @@ async function calculate() {
             <button :class="{ active: mode === 'select' }" @click="mode = 'select'; cancelCurrent()">选择</button>
             <button :class="{ active: mode === 'rectangle' }" @click="mode = 'rectangle'; cancelCurrent()">矩形</button>
             <button :class="{ active: mode === 'polygon' }" @click="mode = 'polygon'; cancelCurrent()">多边形</button>
-            <button :class="{ active: mode === 'calibrate' }" @click="mode = 'calibrate'; cancelCurrent()">校准</button>
+            <button v-if="calibrationAllowed" :class="{ active: mode === 'calibrate' }" @click="mode = 'calibrate'; cancelCurrent()">校准</button>
             <button :class="{ active: mode === 'pan' }" @click="mode = 'pan'; cancelCurrent()">平移</button>
           </div>
           <button
@@ -1406,7 +1432,7 @@ async function calculate() {
 
         <div class="field-group">
           <label for="drawing-unit">图纸单位</label>
-          <select id="drawing-unit" v-model="unitOverride" :disabled="!!calibrationMmPerUnit">
+          <select id="drawing-unit" v-model="unitOverride" :disabled="!!calibrationMmPerUnit || !unitOverrideAllowed">
             <option value="">按 {{ sourceFormatLabel }} 声明（{{ drawing.unit }}）</option>
             <option value="mm">毫米 mm</option>
             <option value="cm">厘米 cm</option>
@@ -1416,9 +1442,9 @@ async function calculate() {
           </select>
         </div>
 
-        <div class="field-group calibration-group">
+        <div v-if="calibrationAllowed" class="field-group calibration-group">
           <div class="field-heading">
-            <label for="calibration-length">已知长度校准</label>
+            <label for="calibration-length">已知长度校准{{ calibrationPolicy === 'required' ? '（必填）' : '' }}</label>
             <button type="button" :disabled="!calibrationPoints.length && !calibrationLength" @click="clearCalibration">清除</button>
           </div>
           <div class="length-input-row">

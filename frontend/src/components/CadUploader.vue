@@ -57,8 +57,15 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(2) + ' MB'
 }
 function selectFile() { input.value?.click() }
-function onSelect(e) { setFile(e.target.files[0]) }
+function onSelect(e) {
+  setFile(e.target.files[0])
+  resetNativeInput()
+}
 function onDrop(e) { dragging.value = false; setFile(e.dataTransfer.files[0]) }
+function resetNativeInput() {
+  // 清空原生文件框的上次选择，保证再次选择同一个文件也会触发 change。
+  if (input.value) input.value.value = ''
+}
 function setFile(f) {
   if (!f) return
   const ext = f.name.split('.').pop().toLowerCase()
@@ -75,7 +82,11 @@ function preview() {
     reader.readAsArrayBuffer(file.value)
   }
 }
-function remove() { file.value = null; emit('file-change', null) }
+function remove() {
+  file.value = null
+  resetNativeInput()
+  emit('file-change', null)
+}
 
 // Add preview button style
 const style = document.createElement('style')
