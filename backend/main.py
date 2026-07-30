@@ -1055,6 +1055,7 @@ async def analyze_image(
     model_used = recognition_result.get("model_used", vl_model)
     success = recognition_result.get("success", False)
 
+    # ---- 解析空间和材质 ----
     if not recognized_space and not recognition_result.get("error"):
         # 兼容旧格式：尝试从 spaces[0] 提取
         spaces_list = recognition_result.get("spaces", [])
@@ -1066,23 +1067,22 @@ async def analyze_image(
         ceiling_mat = mats.get("ceiling", ceiling_mat)
         decor_style = recognition_result.get("overall_style", decor_style)
 
-        material_info = {
-            "wall": wall_mat,
-            "floor": floor_mat,
-            "ceiling": ceiling_mat,
-            "style": decor_style,
-            "remark": remark,
-            "model_used": model_used,
-        }
-
-        confidence = 0.85 if recognized_space else (0.5 if success else 0)
-        #不再把真实图片路径写进数据库，而是写占位值
-        img_id = await db.add_image_result(
-            "[cleared-after-analysis]",
-            recognized_space=recognized_space,
-            material_info=material_info,
-            confidence=confidence,
-        )
+    # ---- 统一写入数据库 ----
+    confidence = 0.85 if recognized_space else (0.5 if success else 0)
+    material_info = {
+        "wall": wall_mat,
+        "floor": floor_mat,
+        "ceiling": ceiling_mat,
+        "style": decor_style,
+        "remark": remark,
+        "model_used": model_used,
+    }
+    img_id = await db.add_image_result(
+        "[cleared-after-analysis]",
+        recognized_space=recognized_space,
+        material_info=material_info,
+        confidence=confidence,
+    )
 
     result = {
         "image_result_id": img_id,
