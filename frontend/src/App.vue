@@ -651,15 +651,12 @@ function onCadAnnotate(fileObj) {
 function onMeasurementSaved(result) {
   // 标注结果只保留在当前页面会话；回传给测试面板后，测试入口才能人工结果优先。
   if (pendingCadCallback.value) {
-    // 人工标注结果回传至测试面板。
     pendingCadCallback.value(result)
-    pendingCadCallback.value = null
   }
-
+  // 人工标注结果回传至测试面板。
   savedMeasurementResult.value = result
-  savedMeasurementFileSignature.value = fileSignature(cadMeasurementPreviewFile.value) // 在保存人工标注成功后，把这份标注结果绑定到当前图
+  savedMeasurementFileSignature.value = fileSignature(cadMeasurementPreviewFile.value)// 测试入口多次保存时能持续拿到最新人工标注结果
   analysisDone.value = false
-  closeCadPreview()  // ← 注意：closeCadPreview 里会清掉 cadMeasurementPreviewFile，但 callback 已提前调用
 }
 
 async function startAnalysis() {

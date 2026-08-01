@@ -54,7 +54,6 @@ const disabledSnapLayers = ref({})
 const layerFilter = ref('')
 const autoReviewMessage = ref('')
 const lastInitialFile = ref(null)
-const lastInitialSpaces = ref(null)
 
 const colors = ['#19b5a5', '#f59e0b', '#3b82f6', '#ef4444', '#8b5cf6', '#22c55e']
 const MAX_SNAP_SEGMENTS = 250_000
@@ -438,13 +437,13 @@ watch(orthogonalSnap, value => localStorage.setItem('dxf-orthogonal-snap', Strin
 watch(customColors, value => localStorage.setItem('dxf-custom-colors', JSON.stringify(value)), { deep: true })
 watch([unitOverride, calibrationLength, calibrationLengthUnit], () => { measurement.value = null })
 watch(
-  () => [props.active, props.initialFile, props.initialSpaces],
-  async ([active, initialFile, initialSpaces]) => {
+    //只在文件切换时重载cad图
+    () => [props.active, props.initialFile],
+  async ([active, initialFile]) => {
     if (!active || !canAnnotate(initialFile)) return
-    if (lastInitialFile.value === initialFile && lastInitialSpaces.value === initialSpaces) return
+    if (lastInitialFile.value === initialFile) return
     lastInitialFile.value = initialFile
-    lastInitialSpaces.value = initialSpaces
-    await loadMeasurementFile(initialFile, initialSpaces, props.reviewReason)
+    await loadMeasurementFile(initialFile, props.initialSpaces, props.reviewReason)
   },
   { immediate: true },
 )
