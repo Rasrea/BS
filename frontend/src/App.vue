@@ -706,11 +706,10 @@ async function startAnalysis() {
     await sleep(100)
 
     const t0 = Date.now()
-    imageResult.value = await API.analyzeImage(imageFile.value)
+    // 此处去除了多余的一次默认模型调度imageResult.value = await API.analyzeImage(imageFile.value)
     imageResult.value = await API.analyzeImage(imageFile.value, {
       model: selectedModel.value,
-      // TODO
-      cropEnabled: "true",  // 默认开启
+      cropEnabled: true,
     })
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
 
