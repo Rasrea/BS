@@ -1,6 +1,6 @@
 <template>
   <div
-    class="upload-zone"
+    class="upload-zone min-h-[220px]"
     :class="{ active: dragging }"
     @dragover.prevent="dragging = true"
     @dragleave="dragging = false"

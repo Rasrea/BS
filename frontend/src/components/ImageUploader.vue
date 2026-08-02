@@ -1,6 +1,6 @@
 <template>
   <div
-    class="upload-zone"
+    class="upload-zone min-h-[220px]"
     :class="{ active: dragging }"
     @dragover.prevent="dragging = true"
     @dragleave="dragging = false"
@@ -20,25 +20,37 @@
       <p class="text-xs text-gray-400 mt-1">拖拽或点击选择文件</p>
     </template>
     <template v-else>
-      <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-green-50 flex items-center justify-center">
-        <svg class="w-7 h-7 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+      <div class="flex items-center gap-4 w-full">
+        <div v-if="preview" class="relative w-32 h-28 rounded-xl border border-gray-200 bg-gray-50 overflow-hidden group shrink-0">
+          <button class="w-full h-full flex items-center justify-center" @click.stop="previewImage">
+            <img :src="preview" class="max-w-full max-h-full object-contain" />
+            <span class="absolute inset-0 hidden group-hover:flex items-center justify-center bg-black/35 text-xs text-white">
+              预览大图
+            </span>
+          </button>
+        </div>
+        <div class="min-w-0 flex-1 text-left">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-2 h-2 rounded-full bg-green-500 shrink-0"></span>
+            <span class="text-xs font-medium text-green-700">已选择效果图</span>
+          </div>
+          <p class="text-sm font-medium text-gray-800 truncate" :title="file.name">{{ file.name }}</p>
+          <p class="text-xs text-gray-400 mt-1">{{ formatSize(file.size) }}</p>
+          <div class="flex items-center gap-3 mt-3">
+            <button class="text-xs text-primary-600 hover:text-primary-800 font-medium" @click.stop="previewImage">
+              🔍 预览大图
+            </button>
+            <button class="text-xs text-red-500 hover:text-red-700" @click.stop="remove">移除</button>
+          </div>
+        </div>
       </div>
-      <p class="text-sm font-medium text-green-700 break-all">{{ file.name }}</p>
-      <p class="text-xs text-gray-400 mt-1">{{ formatSize(file.size) }}</p>
-      <div v-if="preview" class="mt-3">
-        <img :src="preview" class="max-h-28 mx-auto rounded-lg shadow-sm border border-gray-200" />
-      </div>
-      <button class="mt-2 text-xs text-red-500 hover:text-red-700 underline" @click.stop="remove">移除</button>
     </template>
   </div>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-const emit = defineEmits(['file-change'])
+const emit = defineEmits(['file-change', 'preview'])
 const file = ref(null)
 const preview = ref(null)
 const dragging = ref(false)
@@ -74,5 +86,8 @@ function remove() {
   preview.value = null
   resetNativeInput()
   emit('file-change', null)
+}
+function previewImage() {
+  if (preview.value) emit('preview', preview.value)
 }
 </script>

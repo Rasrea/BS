@@ -160,7 +160,11 @@
           </div>
           <div>
             <!-- 单张上传模式：图片 / PDF 二选一 -->
-            <ImageUploader v-if="uploadMode==='single' && singleFormat==='image'" @file-change="onImageFileChange" />
+            <ImageUploader
+              v-if="uploadMode==='single' && singleFormat==='image'"
+              @file-change="onImageFileChange"
+              @preview="openImagePreview"
+            />
             <div v-else-if="uploadMode==='single' && singleFormat==='pdf'" class="card">
               <label class="block text-sm font-medium text-gray-700 mb-2">📄 上传PDF施工图</label>
               <input type="file" accept=".pdf" @change="onPdfFileChange"
@@ -176,11 +180,6 @@
             </div>
             <!-- 多张队列模式（同时支持CAD和效果图） -->
             <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
-            <!-- 图片预览 -->
-            <div v-if="imagePreviewUrl && uploadMode==='single' && singleFormat==='image'" class="mt-2 p-2 bg-gray-50 rounded border border-gray-200">
-              <p class="text-xs text-gray-500 mb-1">🖼️ 效果图预览:</p>
-              <img :src="imagePreviewUrl" class="w-full h-32 object-cover rounded border border-gray-200" />
-            </div>
           </div>
         </div>
 
@@ -321,6 +320,33 @@
       </div>
     </Teleport>
 
+    <!-- 全屏效果图预览 -->
+    <Teleport to="body">
+      <div
+        v-if="showImagePreview && imagePreviewUrl"
+        class="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
+        @click.self="showImagePreview = false"
+      >
+        <div class="relative w-full h-full flex flex-col">
+          <div class="flex items-center justify-between gap-3 mb-3 text-white">
+            <div class="min-w-0">
+              <p class="text-sm font-medium truncate">{{ imageFile?.name || '效果图预览' }}</p>
+              <p class="text-xs text-white/60">点击空白区域或右上角关闭</p>
+            </div>
+            <button
+              class="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white text-xl leading-none"
+              @click="showImagePreview = false"
+            >
+              ×
+            </button>
+          </div>
+          <div class="flex-1 min-h-0 flex items-center justify-center">
+            <img :src="imagePreviewUrl" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Footer -->
     <footer class="mt-8 py-4 border-t border-gray-200">
       <div class="max-w-7xl mx-auto px-4 text-center text-xs text-gray-400">
@@ -403,6 +429,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 // 文件预览
 const imagePreviewUrl = ref('')
+const showImagePreview = ref(false)
 // CAD 图纸预览（全屏）
 const showCadPreview = ref(false)
 const cadPreviewFile = ref(null)
@@ -574,6 +601,7 @@ async function onCadFileChange(f) {
 }
 async function onImageFileChange(f) {
   if (imageFile.value && imageFile.value !== f) await clearServerUploadsQuietly()
+  showImagePreview.value = false
   imageFile.value = f
   imgDone.value = !!f
   imageResult.value = null
@@ -583,6 +611,10 @@ async function onImageFileChange(f) {
     imagePreviewUrl.value = ''
   }
   analysisDone.value = false
+}
+function openImagePreview(url = '') {
+  if (url) imagePreviewUrl.value = url
+  if (imagePreviewUrl.value) showImagePreview.value = true
 }
 function onQueueResults(results) {
   // 队列完成后自动切到融合报价tab查看结果
@@ -601,6 +633,7 @@ async function clearFiles() {
   imageFile.value = null
   cadResult.value = null
   imageResult.value = null
+  showImagePreview.value = false
   imagePreviewUrl.value = ''
   clearSavedMeasurementResult()
   cadDone.value = false
