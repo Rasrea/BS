@@ -133,7 +133,9 @@
               </td>
               <td class="px-3 py-2 text-left text-green-700 text-xs bg-green-50/50 truncate max-w-[100px]"
                   :title="getSurfaceMat(s, 'floor')">
-                {{ getSurfaceMat(s, 'floor') || '—' }}
+                <span class="cursor-pointer hover:underline" @click="showBindDialog(s, 'floor')">
+                  {{ getSurfaceMat(s, 'floor') || '—' }}
+                </span>
               </td>
               <!-- 墙面 -->
               <td class="px-3 py-2 text-right text-blue-700 bg-blue-50/50">
@@ -144,7 +146,9 @@
               </td>
               <td class="px-3 py-2 text-left text-blue-700 text-xs bg-blue-50/50 truncate max-w-[100px]"
                   :title="getSurfaceMat(s, 'wall')">
-                {{ getSurfaceMat(s, 'wall') || '—' }}
+                <span class="cursor-pointer hover:underline" @click="showBindDialog(s, 'wall')">
+                  {{ getSurfaceMat(s, 'wall') || '—' }}
+                </span>
               </td>
               <!-- 顶面 -->
               <td class="px-3 py-2 text-right text-purple-700 font-medium bg-purple-50/50">
@@ -152,14 +156,26 @@
               </td>
               <td class="px-3 py-2 text-left text-purple-700 text-xs bg-purple-50/50 truncate max-w-[100px]"
                   :title="getSurfaceMat(s, 'ceiling')">
-                {{ getSurfaceMat(s, 'ceiling') || '—' }}
+                <span class="cursor-pointer hover:underline" @click="showBindDialog(s, 'ceiling')">
+                  {{ getSurfaceMat(s, 'ceiling') || '—' }}
+                </span>
               </td>
               <!-- 操作按钮 -->
               <td class="px-2 py-2 text-center">
-                <button class="text-[10px] text-primary-600 hover:text-primary-800"
-                        @click="showBindDialog(s)">
-                  ✏️ 绑定
-                </button>
+                <div class="flex items-center justify-center gap-0.5">
+                  <button class="text-[10px] px-1 py-0.5 rounded text-green-600 hover:bg-green-50"
+                          @click="showBindDialog(s, 'floor')" title="绑定地面材质">
+                    地
+                  </button>
+                  <button class="text-[10px] px-1 py-0.5 rounded text-blue-600 hover:bg-blue-50"
+                          @click="showBindDialog(s, 'wall')" title="绑定墙面材质">
+                    墙
+                  </button>
+                  <button class="text-[10px] px-1 py-0.5 rounded text-purple-600 hover:bg-purple-50"
+                          @click="showBindDialog(s, 'ceiling')" title="绑定顶面材质">
+                    顶
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -205,7 +221,7 @@
           <div>
             <label class="text-xs text-gray-500 block mb-1">快速选择</label>
             <div class="flex flex-wrap gap-1.5">
-              <button v-for="opt in quickMaterials" :key="opt.name"
+              <button v-for="opt in filteredQuickMaterials" :key="opt.name"
                       class="text-[10px] px-2 py-1 rounded-full border"
                       :class="bindDialog.materialName === opt.name
                         ? 'bg-primary-100 border-primary-300 text-primary-700'
@@ -266,12 +282,26 @@ const filterMatched = ref('all')
 const page = ref(1)
 const pageSize = 20
 
-const quickMaterials = [
-  { name: '乳胶漆' }, { name: '墙布/壁纸' }, { name: '瓷砖' },
-  { name: '木地板' }, { name: '大理石' }, { name: '石膏板吊顶' },
-  { name: '铝扣板吊顶' }, { name: '木饰面' },
-]
+// 快速选择材质，按表面类型分组
+const quickMaterialsBySurface = {
+  floor: [
+    { name: '地砖' }, { name: '木地板' }, { name: '复合地板' },
+    { name: '大理石' }, { name: '花岗岩' }, { name: '水磨石' },
+  ],
+  wall: [
+    { name: '乳胶漆' }, { name: '墙布/壁纸' }, { name: '瓷砖' },
+    { name: '木饰面' }, { name: '大理石' }, { name: '软包' },
+  ],
+  ceiling: [
+    { name: '乳胶漆' }, { name: '石膏板吊顶' }, { name: '铝扣板吊顶' },
+    { name: '矿棉板吊顶' }, { name: '木饰面吊顶' },
+  ],
+}
 
+// 根据当前绑定的表面类型过滤快速材质
+const filteredQuickMaterials = computed(() => {
+  return quickMaterialsBySurface[bindDialog.value.surface] || quickMaterialsBySurface.floor
+})
 const renameDialog = ref({
   show: false,
   cadId: null,
@@ -389,7 +419,13 @@ function getSurfaceMat(space, surface) {
   return ''
 }
 
+// 检查空间是否有任意表面的手动绑定材质
 function hasManualMat(space) {
+  const surfaces = space.surface_breakdown?.surfaces
+  if (!surfaces) return false
+  for (const key of ['floor', 'wall', 'ceiling']) {
+    if (surfaces[key]?.material_source === 'manual') return true
+  }
   return false
 }
 
@@ -398,12 +434,13 @@ function surfaceLabel(surface) {
   return map[surface] || surface
 }
 
-function showBindDialog(space) {
+// 弹出材质绑定对话框，surface 参数指定目标面（floor/wall/ceiling）
+function showBindDialog(space, surface = 'floor') {
   bindDialog.value = {
     show: true,
     cadId: space.id,
     spaceName: space.space_name,
-    surface: 'floor',
+    surface: surface,
     materialName: '',
     materialCode: '',
   }
