@@ -18,36 +18,23 @@
     </div>
 
     <template v-if="data.success && data.data">
-      <!-- 识别空间 -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4" v-if="data.data.recognized_space">
-        <div class="bg-blue-50 rounded-xl p-4">
-          <p class="text-xs text-blue-600 mb-1">识别空间</p>
-          <p class="text-base font-semibold text-blue-800">{{ data.data.recognized_space }}</p>
+      <!-- 识别结果 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-1.5 mb-4">
+        <div class="p-1.5 bg-gray-50 rounded">
+          <div class="text-[9px] text-gray-400">空间</div>
+          <div class="text-xs font-medium">{{ data.data.recognized_space || '-' }}</div>
         </div>
-        <div class="bg-purple-50 rounded-xl p-4">
-          <p class="text-xs text-purple-600 mb-1">置信度</p>
-          <div class="flex items-center gap-2">
-            <div class="flex-1 bg-purple-200 rounded-full h-2">
-              <div class="bg-purple-500 h-2 rounded-full" :style="{ width: (data.data.confidence * 100) + '%' }"></div>
-            </div>
-            <span class="text-sm font-semibold text-purple-700">{{ (data.data.confidence * 100).toFixed(0) }}%</span>
-          </div>
+        <div class="p-1.5 bg-gray-50 rounded">
+          <div class="text-[9px] text-gray-400">墙面</div>
+          <div class="text-xs font-medium">{{ data.data.wall_material || '-' }}</div>
         </div>
-      </div>
-
-      <!-- 材质信息 -->
-      <div class="grid grid-cols-3 gap-3 mb-4">
-        <div class="bg-white border border-gray-200 rounded-xl p-3" v-if="data.data.wall_material">
-          <p class="text-[10px] text-gray-400 uppercase mb-1">墙面</p>
-          <p class="text-sm font-medium text-gray-800">{{ data.data.wall_material }}</p>
+        <div class="p-1.5 bg-gray-50 rounded">
+          <div class="text-[9px] text-gray-400">地面</div>
+          <div class="text-xs font-medium">{{ data.data.floor_material || '-' }}</div>
         </div>
-        <div class="bg-white border border-gray-200 rounded-xl p-3" v-if="data.data.floor_material">
-          <p class="text-[10px] text-gray-400 uppercase mb-1">地面</p>
-          <p class="text-sm font-medium text-gray-800">{{ data.data.floor_material }}</p>
-        </div>
-        <div class="bg-white border border-gray-200 rounded-xl p-3" v-if="data.data.ceiling_material">
-          <p class="text-[10px] text-gray-400 uppercase mb-1">吊顶</p>
-          <p class="text-sm font-medium text-gray-800">{{ data.data.ceiling_material }}</p>
+        <div class="p-1.5 bg-gray-50 rounded">
+          <div class="text-[9px] text-gray-400">顶面</div>
+          <div class="text-xs font-medium">{{ data.data.ceiling_material || '-' }}</div>
         </div>
       </div>
       <div v-if="data.data.other" class="p-3 bg-gray-50 rounded-xl mb-3">

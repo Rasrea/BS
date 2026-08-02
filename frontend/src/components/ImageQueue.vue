@@ -81,9 +81,10 @@
             </span>
           </div>
           <div v-if="r.success" class="text-xs text-gray-500 mt-0.5">
-            <span>{{ r.recognized_space || '-' }}</span>
+            <span>空间: {{ r.recognized_space || '-' }}</span>
             <span class="ml-2">墙面: {{ r.wall || '-' }}</span>
             <span class="ml-2">地面: {{ r.floor || '-' }}</span>
+            <span class="ml-2">顶面: {{ r.ceiling || '-' }}</span>
           </div>
           <div v-else class="text-xs text-red-500 mt-0.5">{{ r.error }}</div>
         </div>

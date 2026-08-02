@@ -25,10 +25,6 @@
             <span class="font-medium text-gray-800">{{ r.recognized_space || '未识别空间' }}</span>
             <span class="text-gray-400 ml-2">{{ r.original_filename || ('图片#' + r.id) }}</span>
           </div>
-          <span v-if="r.confidence" class="text-xs px-2 py-0.5 rounded-full"
-            :class="r.confidence > 0.7 ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'">
-            {{ (r.confidence * 100).toFixed(0) }}%
-          </span>
         </label>
       </div>
     </div>
@@ -46,9 +42,6 @@
             <div class="flex items-center gap-2">
               <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">AI</span>
               <span class="font-medium text-gray-800">{{ m.recognized_space }}</span>
-              <span v-if="m.confidence" class="text-xs text-gray-400">
-                置信度 {{ (m.confidence * 100).toFixed(0) }}%
-              </span>
             </div>
             <span v-if="isConfirmed(m)" class="text-xs text-green-600 font-medium">✓ 已绑定</span>
           </div>
