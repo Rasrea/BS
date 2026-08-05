@@ -701,7 +701,7 @@ async def calculate_dxf_measurement(payload: DxfMeasurementRequest):
 
 
 async def save_measurement_result(payload: DxfMeasurementRequest):
-    """ 无论成功还是抛错，都会调用清理函数"""
+    """校验并返回人工标注结果；源文件保留到标注弹窗关闭。"""
     try:
         save_path = measurement_file_path(payload.drawing_id, payload.source_format)
         source_file_hash = file_sha256(save_path.read_bytes())
@@ -733,7 +733,7 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
                 "warnings": room["warnings"],
             })
 
-        return {
+        result = {
             "measurement_id": payload.drawing_id,
             "source_format": payload.source_format,
             "source_file_hash": source_file_hash,
@@ -745,6 +745,13 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
             "mm_per_unit": measurement["mm_per_unit"],
             "unit_source": measurement["unit_source"],
         }
+
+        result_path = measurement_result_path(payload.drawing_id)
+        temp_path = result_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(result_path)
+
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
@@ -752,29 +759,26 @@ async def save_measurement_result(payload: DxfMeasurementRequest):
     except Exception as exc:
         logger.exception("DXF measurement saving failed")
         raise HTTPException(status_code=500, detail=f"DXF 面积结果保存失败: {exc}") from exc
-    finally:
-        # 人工标注文件只是会话临时文件，保存校验失败也要清理。
-        cleanup_measurement_work_files(payload.drawing_id, payload.source_format)
 
 
 @app.post("/api/measurement/save")
 async def save_dxf_measurement(payload: DxfMeasurementRequest):
     """校验并保存人工面积结果，不执行计价或覆盖正式分析记录。"""
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已保存，可继续编辑", task_status=STATE_IDLE)
 
 
 @app.post("/api/dxf/measurement/save", deprecated=True)
 async def save_legacy_dxf_measurement(payload: DxfMeasurementRequest):
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已保存，可继续编辑", task_status=STATE_IDLE)
 
 
 @app.post("/api/dxf/measurement/apply", deprecated=True)
 async def apply_dxf_measurement(payload: DxfMeasurementRequest):
     """兼容旧客户端；仅保存面积结果，不再执行计价。"""
     result = await save_measurement_result(payload)
-    return ok(result, message="面积结果已计算，服务端临时文件已清理", task_status=STATE_IDLE)
+    return ok(result, message="面积结果已保存，可继续编辑", task_status=STATE_IDLE)
 
 
 # ─────────────────── 接口：CAD解析+报价（接口1） ───────────────────
