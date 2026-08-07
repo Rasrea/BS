@@ -129,8 +129,10 @@ def batch_compute(all_spaces: list, settings: Optional[dict] = None) -> list:
     for space in all_spaces:
         name = space.get("space_name", space.get("name", ""))
         area = space.get("area", 0) or 0
-        length = space.get("length", space.get("dimensions", {}).get("width_m", 0)) or 0
-        width = space.get("width", space.get("dimensions", {}).get("height_m", 0)) or 0
+        raw_l = space.get("length", space.get("dimensions", {}).get("width_m", 0)) or 0
+        raw_w = space.get("width", space.get("dimensions", {}).get("height_m", 0)) or 0
+        length = max(raw_l, raw_w)
+        width = min(raw_l, raw_w)
         height = space.get("height", 2.8) or 2.8
 
         breakdown = compute_surface_breakdown(

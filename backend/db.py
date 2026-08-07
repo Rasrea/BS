@@ -464,11 +464,12 @@ class Database:
     # ──────── 效果图识别 ────────
 
     async def add_image_result(self, image_path: str, recognized_space: str = "",
-                               material_info: dict = None, confidence: float = 0):
+                               material_info: dict = None, confidence: float = 0,
+                               drawing_id: int = 0):
         now = _now()
         rid = await self.execute(
-            "INSERT INTO image_analysis_results (image_path, recognized_space, material_info, confidence, create_time, update_time) VALUES (?,?,?,?,?,?)",
-            (image_path, recognized_space, json.dumps(material_info or {}, ensure_ascii=False),
+            "INSERT INTO image_analysis_results (drawing_id, image_path, recognized_space, material_info, confidence, create_time, update_time) VALUES (?,?,?,?,?,?,?)",
+            (drawing_id, image_path, recognized_space, json.dumps(material_info or {}, ensure_ascii=False),
              confidence, now, now)
         )
         return rid
@@ -493,6 +494,14 @@ class Database:
         return [_row_to_dict(r) for r in rows]
 
     # ──────── 报价记录 ────────
+
+    async def get_image_results_by_drawing(self, drawing_id: int):
+        """按图纸ID获取效果图识别结果，避免跨图纸材质污染"""
+        rows = await self.fetchall(
+            "SELECT * FROM image_analysis_results WHERE drawing_id=? AND is_deleted=0 ORDER BY id DESC",
+            (drawing_id,)
+        )
+        return [_row_to_dict(r) for r in rows]
 
     async def add_quote(self, cad_result_id: int, image_result_ids: list,
                         base_price: float, material_diff_price: float = 0,
