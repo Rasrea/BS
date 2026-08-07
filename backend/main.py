@@ -2475,7 +2475,12 @@ async def compute_surface_breakdown(drawing_id: int):
     结果存入 cad_analysis_results 的 detail_json 字段。
     不修改任何已有汇总/报价数据。
     """
+    tid = ""
     try:
+        ok_flag, tid = await task_state.acquire("merge")
+        if not ok_flag:
+            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+
         cad_rows = await db.get_cad_results(drawing_id)
         if not cad_rows:
             return err(404, f"图纸 {drawing_id} 没有CAD分析结果")
@@ -2504,6 +2509,8 @@ async def compute_surface_breakdown(drawing_id: int):
 
     except Exception as e:
         return err(500, f"分层计算失败: {str(e)}", task_status=task_state.state)
+    finally:
+        await task_state.release()
 
 
 @app.get("/api/spaces/{drawing_id}/breakdown")
@@ -2517,8 +2524,11 @@ async def get_surface_breakdown(drawing_id: int):
         if not cad_rows:
             return err(404, f"图纸 {drawing_id} 没有CAD分析结果")
 
-        # 取所有效果图材质，按 recognized_space 关联
-        image_rows = await db.get_image_results()
+        # 取当前图纸关联的效果图材质，避免跨图纸污染
+        image_rows = await db.get_image_results_by_drawing(drawing_id)
+        if not image_rows:
+            # 向后兼容：没有 drawing_id 关联的记录时回退到全局查询
+            image_rows = await db.get_image_results()
         material_by_space = {}
         for img in image_rows:
             space = img.get("recognized_space", "").strip()
@@ -2582,6 +2592,7 @@ async def get_surface_breakdown(drawing_id: int):
                 "area": row.get("area", 0),
                 "surface_breakdown": breakdown,
                 "material_source": mat_link.get("image_id"),
+                "has_material_match": bool(mat_link),
                 "material_confidence": mat_link.get("confidence", 0),
             })
 
@@ -3078,8 +3089,10 @@ async def get_comparison_table(drawing_id: int):
         if not cad_rows:
             return err(404, f"图纸 {drawing_id} 没有CAD分析结果")
 
-        # 取所有AI识别结果
-        image_rows = await db.get_image_results()
+        # 取当前图纸关联的效果图材质，避免跨图纸污染
+        image_rows = await db.get_image_results_by_drawing(drawing_id)
+        if not image_rows:
+            image_rows = await db.get_image_results()
         ai_by_space = {}
         for img in image_rows:
             space = img.get("recognized_space", "").strip()
