@@ -968,10 +968,11 @@ async def analyze_image(
     image_file: UploadFile = File(None),
     model: str = Form(""),
     crop_enabled: str = Form("true"),
+    drawing_id: int = Form(0),
 ):
     """
     接口2：单张效果图材质/空间同步识别
-    入参：image_file=@效果图.jpg
+    入参：image_file=@效果图.jpg, drawing_id=当前图纸ID（可选）
     能力：LLaVA识别材质、空间、软装
     状态约束：仅idle可调用，占用ai_running锁
     """
@@ -1086,6 +1087,9 @@ async def analyze_image(
         recognized_space=recognized_space,
         material_info=material_info,
         confidence=confidence,
+        # drawing_id 可选：不传时仍为 0，保持“独立识别效果图只进历史库”的旧行为。
+        # 传入当前 CAD 图纸 ID 后，融合报价页的“当前图纸”模式才能查到该效果图。
+        drawing_id=drawing_id,
     )
 
     result = {
@@ -2447,23 +2451,76 @@ async def list_drawings():
 
 
 @app.get("/api/image-results")
-async def get_all_image_results():
-    """获取所有效果图识别结果"""
+async def get_all_image_results(
+    scope: str = Query("current"),
+    drawing_id: int = Query(0),
+    page_size: int = Query(200, ge=1, le=1000),
+):
+    """
+    获取融合报价可选择的效果图识别结果。
+
+    设计原则：
+    - scope=current：默认模式，只返回当前 drawing_id 关联的识别结果，避免跨项目材质污染。
+    - scope=all：显式历史库模式，允许用户主动复用历史材质，但前端会提示误选风险。
+    - 不做“当前为空自动回退全部历史”，否则用户容易误以为历史材质属于当前图纸。
+    - 返回 material_info 和墙/地/顶摘要字段，解决房间重名时无法区分具体材质的问题。
+    """
     try:
-        rows = await db.get_image_results()
+        # 当前图纸模式是融合报价的安全主路径：只查 image_analysis_results.drawing_id。
+        if scope == "current":
+            rows = await db.get_image_results_by_drawing(drawing_id) if drawing_id else []
+        # 全部历史模式必须由前端显式切换触发，用于复用历史识别结果。
+        elif scope == "all":
+            rows = await db.get_image_results(limit=page_size)
+        else:
+            return err(422, "scope 仅支持 current 或 all")
+
         if not rows:
-            return ok([])
+            # 空结果也返回 scope/drawing_id/page_size，方便前端显示准确空态文案。
+            return ok({
+                "items": [],
+                "scope": scope,
+                "drawing_id": drawing_id,
+                "page_size": page_size,
+            })
+
         results = []
         for r in rows:
+            # material_info 在 SQLite 中以 JSON 文本存储；这里统一转为 dict 给前端使用。
+            # 老数据或异常数据解析失败时降级为空对象，避免单条脏数据拖垮整个列表。
+            material_info = r.get("material_info", {})
+            if isinstance(material_info, str):
+                try:
+                    material_info = json.loads(material_info)
+                except Exception:
+                    material_info = {}
+
+            # analyze 接口会清理临时图片并写入占位路径；这种情况下用 图片#ID 作为稳定显示名。
+            image_path = str(r.get("image_path", ""))
+            filename = Path(image_path).name if image_path and image_path != "[cleared-after-analysis]" else ""
             results.append({
                 "id": r.get("id"),
                 "image_result_id": r.get("id"),
+                "drawing_id": r.get("drawing_id", 0),
                 "recognized_space": r.get("recognized_space", ""),
-                "original_filename": r.get("original_filename", r.get("filename", "")),
-                "filename": r.get("filename", ""),
+                "material_info": material_info,
+                # 同时返回完整 material_info 和常用摘要字段：
+                # 前端列表可直接展示墙/地/顶材质，后续逻辑仍可使用完整 JSON。
+                "wall_material": material_info.get("wall", material_info.get("墙面材质", "")),
+                "floor_material": material_info.get("floor", material_info.get("地面材质", "")),
+                "ceiling_material": material_info.get("ceiling", material_info.get("顶面材质", "")),
+                "style": material_info.get("style", material_info.get("风格", "")),
+                "original_filename": filename or f"图片#{r.get('id')}",
+                "filename": filename,
                 "confidence": r.get("confidence", 0),
+                "create_time": r.get("create_time", ""),
             })
-        return ok(results)
+        return ok({
+            "items": results,
+            "scope": scope,
+            "drawing_id": drawing_id,
+            "page_size": page_size,
+        })
     except Exception as e:
         return err(500, f"查询效果图识别结果失败: {str(e)}")
 

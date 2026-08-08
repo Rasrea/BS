@@ -81,11 +81,14 @@ export const API = {
   },
 
   // === 效果图识别 (接口2) ===
-  async analyzeImage(file, { model = '', cropEnabled = true } = {}) {
+  async analyzeImage(file, { model = '', cropEnabled = true, drawingId = 0 } = {}) {
     const fd = new FormData()
     fd.append('image_file', file)
     fd.append('model', model)  // 模型名称
     fd.append('crop_enabled', cropEnabled ? 'true' : 'false')  // 是否图像裁剪
+    // drawing_id 可选：有当前 CAD 图纸时传入，用于把效果图识别结果归属到当前图纸。
+    // 不传或为 0 时保持旧行为，记录只会出现在“全部历史”模式。
+    if (drawingId) fd.append('drawing_id', String(drawingId))
     const { data } = await api.post('/analyze', fd, { timeout: 120000 })
     return data
   },
@@ -214,9 +217,16 @@ export const API = {
   },
 
   // === 获取图像识别结果列表 ===
-  async getImageResults() {
-    try { const { data } = await api.get('/image-results'); return data }
-    catch (e) { return handleError(e) }
+  async getImageResults({ scope = 'current', drawingId = null, pageSize = 200 } = {}) {
+    try {
+      // scope=current：只取当前图纸关联结果；scope=all：取历史库。
+      // page_size 只影响 all 模式，避免历史库继续受后端旧的 50 条限制影响。
+      const params = new URLSearchParams({ scope, page_size: String(pageSize) })
+      // current 模式需要 drawing_id；没有图纸时后端返回空列表，由前端显示空态。
+      if (drawingId) params.append('drawing_id', String(drawingId))
+      const { data } = await api.get(`/image-results?${params.toString()}`)
+      return data
+    } catch (e) { return handleError(e) }
   },
 
   // === 确认绑定 (新增) ===

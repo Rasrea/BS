@@ -179,7 +179,11 @@
               <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
             </div>
             <!-- 多张队列模式（同时支持CAD和效果图） -->
-            <ImageQueue v-else-if="uploadMode==='multi'" @results-update="onQueueResults" />
+            <ImageQueue
+              v-else-if="uploadMode==='multi'"
+              :drawing-id="activeDrawingId || cadResult?.data?.drawing_id || 0"
+              @results-update="onQueueResults"
+            />
           </div>
         </div>
 
@@ -409,6 +413,16 @@ const progressSteps = ref([])
 const refreshKey = ref(0)
 provide('refreshKey', refreshKey)
 
+// 当前业务图纸 ID，只服务于“图纸分析/融合报价 → 效果图上传”的归属链路。
+// 它不改数据库结构，也不影响识别测试、PDF、历史报价等其它模块。
+const activeDrawingId = ref(0)
+provide('activeDrawingId', activeDrawingId)
+
+// 本次页面会话上传成功的效果图识别结果 ID。
+// 融合报价默认只显示这些 ID，避免同一图纸下混入上次上传的旧效果图。
+const latestImageResultIds = ref([])
+provide('latestImageResultIds', latestImageResultIds)
+
 // 🌟 融合后自动选中报价ID，传递给标准报价页
 const autoSelectQuoteId = ref(null)
 provide('autoSelectQuoteId', autoSelectQuoteId)
@@ -617,6 +631,10 @@ function openImagePreview(url = '') {
   if (imagePreviewUrl.value) showImagePreview.value = true
 }
 function onQueueResults(results) {
+  const ids = results
+    .map(r => r.image_result_id || r.result_data?.data?.image_result_id)
+    .filter(Boolean)
+  latestImageResultIds.value = ids
   // 队列完成后自动切到融合报价tab查看结果
   if (results.length > 0) {
     activeTab.value = 'merge'
@@ -714,6 +732,9 @@ async function startAnalysis() {
       projectName.value,
       manualMeasurement,
     )
+    if (cadResult.value?.success) {
+      activeDrawingId.value = cadResult.value?.data?.drawing_id || 0
+    }
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
     setStepDone('📤 上传CAD文件...', dur)
 
@@ -739,10 +760,14 @@ async function startAnalysis() {
     await sleep(100)
 
     const t0 = Date.now()
+    latestImageResultIds.value = []
     // 此处去除了多余的一次默认模型调度imageResult.value = await API.analyzeImage(imageFile.value)
     imageResult.value = await API.analyzeImage(imageFile.value, {
       model: selectedModel.value,
       cropEnabled: true,
+      // 优先使用融合报价当前选中的图纸，其次使用本页刚解析出的 CAD 图纸；
+      // 两者都没有时传 0，保持独立效果图识别进入历史库的旧行为。
+      drawingId: activeDrawingId.value || cadResult.value?.data?.drawing_id || 0,
     })
     const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
 
@@ -751,6 +776,10 @@ async function startAnalysis() {
     setStepDone('🧠 调用视觉模型识别...')
 
     if (imageResult.value?.success) {
+      const imageResultId = imageResult.value?.data?.image_result_id
+      if (imageResultId) {
+        latestImageResultIds.value = [imageResultId]
+      }
       setStepDone('📋 解析识别结果...')
     } else {
       setStepDone('📋 解析识别结果...', '失败')

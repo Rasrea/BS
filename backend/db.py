@@ -481,15 +481,24 @@ class Database:
             (confirm_status, manual_correction, now, rid)
         )
 
-    async def get_image_results(self, ids: list = None):
+    async def get_image_results(self, ids: list = None, limit: int = 200):
+        """
+        获取效果图识别结果。
+
+        - 传 ids：用于融合、导出、确认绑定等精确读取场景，必须按指定 ID 返回。
+        - 不传 ids：用于“全部历史”列表，按最新记录倒序返回，并由调用方控制 limit。
+        - 这里不再写死 LIMIT 50，避免融合报价页面只能看到最近 50 条历史记录。
+        """
         if ids:
             placeholders = ",".join("?" for _ in ids)
             rows = await self.fetchall(
                 f"SELECT * FROM image_analysis_results WHERE id IN ({placeholders}) AND is_deleted=0", tuple(ids)
             )
         else:
+            # 历史库模式需要可配置条数；limit 使用 SQL 参数绑定，避免拼接数字造成注入风险。
             rows = await self.fetchall(
-                "SELECT * FROM image_analysis_results WHERE is_deleted=0 ORDER BY id DESC LIMIT 50"
+                "SELECT * FROM image_analysis_results WHERE is_deleted=0 ORDER BY id DESC LIMIT ?",
+                (limit,)
             )
         return [_row_to_dict(r) for r in rows]
 

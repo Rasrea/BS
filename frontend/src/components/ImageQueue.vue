@@ -105,10 +105,15 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, inject } from 'vue'
 import API from '../services/api.js'
 
 const emit = defineEmits(['results-update'])
+const latestImageResultIds = inject('latestImageResultIds', ref([]))
+const props = defineProps({
+  // 当前 CAD 图纸 ID。为 0 时保持旧行为：效果图只进入历史库，不归属到当前图纸。
+  drawingId: { type: Number, default: 0 },
+})
 
 const dragging = ref(false)
 const input = ref(null)
@@ -163,6 +168,8 @@ async function startQueue() {
   if (queueRunning.value || pendingFiles.value.length === 0) return
   queueRunning.value = true
   queueError.value = ''
+  // 新队列开始时清空“本次上传”集合，避免融合报价继续展示上一轮结果。
+  latestImageResultIds.value = []
 
   const files = [...pendingFiles.value]
   pendingFiles.value = []
@@ -172,9 +179,13 @@ async function startQueue() {
     currentProcessing.value = item.file
 
     try {
-      const res = await API.analyzeImage(item.file)
+      const res = await API.analyzeImage(item.file, {
+        // 多张队列与单张上传使用同一归属规则：有 CAD 图纸 ID 才绑定到当前图纸。
+        drawingId: props.drawingId,
+      })
       results.value.push({
         success: res.success,
+        image_result_id: res.data?.image_result_id || 0,
         filename: item.file.name,
         preview: item.preview,
         recognized_space: res.data?.recognized_space || '',

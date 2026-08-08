@@ -13,17 +13,48 @@
 
     <!-- 步骤2：选择图片识别结果 -->
     <div class="card mb-4">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">② 选择效果图识别结果（可多选）</h3>
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-gray-700">② 选择效果图识别结果（可多选）</h3>
+        <!--
+          默认使用“本次上传”：只展示本页面会话中新上传成功的效果图，避免同一图纸下混入旧记录。
+          “全部历史”是显式复用入口，适合用户确认要跨项目复用历史识别结果的场景。
+        -->
+        <div class="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+          <button type="button"
+                  class="px-3 py-1.5"
+                  :class="imageResultScope === 'session' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                  @click="imageResultScope = 'session'">
+            本次上传
+          </button>
+          <button type="button"
+                  class="px-3 py-1.5 border-l border-gray-200"
+                  :class="imageResultScope === 'all' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
+                  @click="imageResultScope = 'all'">
+            全部历史
+          </button>
+        </div>
+      </div>
+      <!-- 历史库模式风险更高：同名房间可能来自不同项目，所以必须给用户明确提示。 -->
+      <div v-if="imageResultScope === 'all'" class="text-xs text-yellow-700 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-2 mb-3">
+        当前显示全部历史识别结果，请根据 ID、房间、材质和时间确认后再选择，避免跨项目材质误用。
+      </div>
       <div v-if="imageResults.length === 0" class="text-sm text-gray-400 py-4 text-center">
-        暂无效果图识别记录，请先在「首页」上传效果图
+        {{ imageResultEmptyText }}
       </div>
       <div v-else class="space-y-2 max-h-48 overflow-y-auto">
         <label v-for="r in imageResults" :key="r.id"
                class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer border border-gray-100">
           <input type="checkbox" :value="r.id" v-model="selectedImageIds" class="rounded text-primary-600" />
-          <div class="flex-1 text-sm">
-            <span class="font-medium text-gray-800">{{ r.recognized_space || '未识别空间' }}</span>
-            <span class="text-gray-400 ml-2">{{ r.original_filename || ('图片#' + r.id) }}</span>
+          <div class="flex-1 text-sm min-w-0">
+            <!-- ID + 房间 + 文件/时间 + 材质摘要共同展示，解决多个“客厅/卧室”无法区分的问题。 -->
+            <div class="flex items-center gap-2">
+              <span class="font-medium text-gray-800">#{{ r.id }} {{ r.recognized_space || '未识别空间' }}</span>
+              <span class="text-gray-400 truncate">{{ r.original_filename || ('图片#' + r.id) }}</span>
+              <span v-if="r.create_time" class="text-gray-400">{{ formatDateTime(r.create_time) }}</span>
+            </div>
+            <div class="text-xs text-gray-500 truncate" :title="materialSummary(r)">
+              {{ materialSummary(r) || '未识别到具体材质' }}
+            </div>
           </div>
         </label>
       </div>
@@ -124,11 +155,17 @@ import API from '../services/api.js'
 import QuoteDisplay from './QuoteDisplay.vue'
 
 const refreshKey = inject('refreshKey', ref(0))
+const activeDrawingId = inject('activeDrawingId', ref(0))
+const latestImageResultIds = inject('latestImageResultIds', ref([]))
 
 const emit = defineEmits(['quote-exists'])
 
 const cadResults = ref([])
 const imageResults = ref([])
+// 效果图列表有两种用户可见模式：
+// session = 本次页面会话上传结果，默认安全模式，避免混入同图纸旧记录；
+// all = 全部历史结果，用于用户显式跨项目复用。
+const imageResultScope = ref('session')
 const selectedCadId = ref(null)
 const selectedImageIds = ref([])
 const merging = ref(false)
@@ -147,6 +184,36 @@ const confirmedMatches = ref({})  // { "imageId-cadId": true }
 const confirmingMatch = ref({})   // { "imageId-cadId": true }
 
 const cadBindingOptions = computed(() => bindings.value.map((_, i) => i))
+
+// 空态文案跟随模式变化，避免“当前图纸为空”时让用户误解为系统没有任何历史数据。
+const imageResultEmptyText = computed(() => {
+  if (imageResultScope.value === 'session') {
+    return latestImageResultIds.value.length > 0
+      ? '本次上传的效果图未归属到当前图纸，请确认上传时已选中当前图纸'
+      : '本次暂无新上传的效果图，可上传效果图或切换到「全部历史」复用历史材质'
+  }
+  return '历史库暂无效果图识别记录，请先在「首页」上传效果图'
+})
+
+function materialSummary(r) {
+  // 后端会返回 wall_material/floor_material/ceiling_material 摘要；
+  // 这里仍兼容直接从 material_info 读取，保证旧接口缓存或旧数据也能展示材质。
+  const material = r.material_info || {}
+  const wall = r.wall_material || material.wall || material['墙面材质']
+  const floor = r.floor_material || material.floor || material['地面材质']
+  const ceiling = r.ceiling_material || material.ceiling || material['顶面材质']
+  return [
+    wall ? `墙: ${wall}` : '',
+    floor ? `地: ${floor}` : '',
+    ceiling ? `顶: ${ceiling}` : '',
+  ].filter(Boolean).join(' / ')
+}
+
+function formatDateTime(value) {
+  // 后端时间可能是 ISO 格式或普通字符串；列表只需要分钟级信息用于人工区分记录。
+  if (!value) return ''
+  return String(value).replace('T', ' ').slice(0, 16)
+}
 
 const currentCadSpaces = computed(() => {
   // 优先从实时加载的空间列表取
@@ -210,9 +277,15 @@ async function loadResults() {
       })
     }
   }
-  // 自动选中最新一条
-  if (cadResults.value.length > 0 && !selectedCadId.value) {
-    selectedCadId.value = cadResults.value[0].id
+  // 自动选中图纸：
+  // 1. 优先对齐 App 中的 activeDrawingId，也就是本次效果图上传实际绑定的图纸；
+  // 2. 没有 activeDrawingId 时才默认选最新图纸；
+  // 3. 不能只在 selectedCadId 为空时处理，否则上传新图纸后仍会停留在旧图纸，导致“本次上传”按旧图纸查询后为空。
+  const activeId = Number(activeDrawingId.value) || 0
+  const hasActiveDrawing = activeId && cadResults.value.some(r => Number(r.id) === activeId)
+  const nextSelectedId = hasActiveDrawing ? activeId : (!selectedCadId.value ? cadResults.value[0]?.id : selectedCadId.value)
+  if (nextSelectedId && Number(selectedCadId.value) !== Number(nextSelectedId)) {
+    selectedCadId.value = nextSelectedId
     await loadSpaces()
   }
   // 🌟 加载效果图识别结果：尝试专用接口 + 历史记录回退
@@ -222,45 +295,41 @@ async function loadResults() {
 // 🌟 加载效果图识别结果（独立函数，便于复用）
 async function loadImageResults() {
   imageResults.value = []
-  // 1. 优先尝试专用接口
+  // 只调用专用接口，不再从报价历史中静默拼装结果：
+  // 本次上传模式内部仍查询当前图纸，再按 latestImageResultIds 做前端过滤；
+  // 用户界面不再暴露“当前图纸全部”，避免把旧记录混入默认选择。
   try {
-    const imgRes = await API.getImageResults()
-    if (imgRes.success && Array.isArray(imgRes.data)) {
-      imgRes.data.forEach(img => {
-        imageResults.value.push({
-          id: img.id || img.image_result_id,
-          recognized_space: img.recognized_space || img.space_name || '未识别',
-          original_filename: img.original_filename || img.filename || ('图片#' + (img.id || 0)),
-          confidence: img.confidence || 0,
-        })
-      })
+    const queryScope = imageResultScope.value === 'all' ? 'all' : 'current'
+    const imgRes = await API.getImageResults({
+      scope: queryScope,
+      drawingId: selectedCadId.value,
+      pageSize: 200,
+    })
+    if (imgRes.success) {
+      // 新接口返回 {items, scope, drawing_id}；保留 Array 兼容是为了不破坏旧后端响应。
+      const items = Array.isArray(imgRes.data) ? imgRes.data : (imgRes.data?.items || [])
+      const latestIdSet = new Set(latestImageResultIds.value.map(id => Number(id)))
+      const scopedItems = imageResultScope.value === 'session'
+        ? items.filter(img => latestIdSet.has(Number(img.id || img.image_result_id)))
+        : items
+      imageResults.value = scopedItems.map(img => ({
+        id: img.id || img.image_result_id,
+        drawing_id: img.drawing_id || 0,
+        recognized_space: img.recognized_space || img.space_name || '未识别',
+        original_filename: img.original_filename || img.filename || ('图片#' + (img.id || 0)),
+        confidence: img.confidence || 0,
+        material_info: img.material_info || {},
+        wall_material: img.wall_material || '',
+        floor_material: img.floor_material || '',
+        ceiling_material: img.ceiling_material || '',
+        create_time: img.create_time || '',
+      }))
       return  // 成功获取到数据就直接返回
     }
-  } catch (e) { /* 静默降级到历史记录回退 */ }
-  // 2. 回退：从历史记录中提取
-  try {
-    const resp = await fetch('/api/history?page=1&page_size=10')
-    const body = await resp.json()
-    if (body.success && body.data?.quotes?.items) {
-      const seen = new Set()
-      body.data.quotes.items.forEach(q => {
-        if (q.image_results) {
-          (Array.isArray(q.image_results) ? q.image_results : [q.image_results]).forEach(img => {
-            const id = img.id || img.image_result_id
-            if (id && !seen.has(id)) {
-              seen.add(id)
-              imageResults.value.push({
-                id,
-                recognized_space: img.recognized_space || img.space_name || '未识别',
-                original_filename: img.original_filename || img.filename || ('图片#' + id),
-                confidence: img.confidence || 0,
-              })
-            }
-          })
-        }
-      })
-    }
-  } catch(e) {}
+  } catch (e) {
+    // 接口失败时保持空列表，让页面显示当前模式的空态文案；不再隐式混入历史数据。
+    imageResults.value = []
+  }
 }
 
 async function loadSpaces() {
@@ -295,11 +364,35 @@ onMounted(loadResults)
 
 // 当选中的CAD变更时加载空间列表 并刷新效果图列表
 watch(selectedCadId, async (newId) => {
+  // 将融合报价当前选中的图纸同步给首页效果图上传使用。
+  // 只同步 drawing_records.id，不改变融合计算、历史报价或其它模块行为。
+  activeDrawingId.value = Number(newId) || 0
+  selectedImageIds.value = []
+  suggestionMatches.value = []
+  confirmedMatches.value = {}
   if (newId) {
     await loadSpaces()
     await loadImageResults()
   } else {
     spaces.value = []
+  }
+})
+
+// 当前图纸 / 全部历史切换时，重新加载并清空旧选择
+watch(imageResultScope, async () => {
+  selectedImageIds.value = []
+  suggestionMatches.value = []
+  confirmedMatches.value = {}
+  await loadImageResults()
+})
+
+// 本次上传完成后 App 会更新 latestImageResultIds；默认模式需要立即刷新为“本次结果”。
+watch(latestImageResultIds, async () => {
+  if (imageResultScope.value === 'session') {
+    selectedImageIds.value = []
+    suggestionMatches.value = []
+    confirmedMatches.value = {}
+    await loadImageResults()
   }
 })
 
