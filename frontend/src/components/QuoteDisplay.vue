@@ -82,6 +82,7 @@
               <th class="text-left py-2 px-3 text-gray-600 font-medium">空间</th>
               <th class="text-left py-2 px-3 text-gray-600 font-medium">类别</th>
               <th class="text-left py-2 px-3 text-gray-600 font-medium">项目</th>
+              <th class="text-left py-2 px-3 text-gray-600 font-medium">材质来源</th>
               <th class="text-right py-2 px-3 text-gray-600 font-medium">数量</th>
               <th class="text-right py-2 px-3 text-gray-600 font-medium">材料单价</th>
               <th class="text-right py-2 px-3 text-gray-600 font-medium">人工单价</th>
@@ -110,6 +111,13 @@
                     {{ item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认' }}
                   </div>
                 </template>
+              </td>
+              <td class="py-2 px-3">
+                <span class="text-[10px] px-1.5 py-0.5 rounded"
+                      :class="materialSourceClass(item)"
+                      :title="item.material_source_note || materialSourceText(item)">
+                  {{ item.material_source_label || materialSourceText(item) }}
+                </span>
               </td>
               <td class="py-2 px-3 text-right">
                 <input v-if="editing" v-model.number="item.quantity" type="number" step="0.01"
@@ -257,6 +265,18 @@ const totalArea = computed(() => props.data?.data?.total_area || 0)
 
 function formatNum(v) { return v ? Number(v).toFixed(2) : '-' }
 function formatPrice(v) { return v ? Number(v).toLocaleString() : '0' }
+
+function materialSourceText(item) {
+  if (item.material_source === 'ai') return 'AI材质'
+  if (item.material_source === 'manual') return '人工绑定'
+  return '默认计价'
+}
+
+function materialSourceClass(item) {
+  if (item.material_source === 'ai') return 'bg-blue-100 text-blue-700'
+  if (item.material_source === 'manual') return 'bg-green-100 text-green-700'
+  return 'bg-gray-100 text-gray-600'
+}
 
 function onEdit(i) {
   editDirty.value[i] = true

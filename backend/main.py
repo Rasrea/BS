@@ -1588,6 +1588,14 @@ async def data_merge(
             sm = space_material_map.get(cad_name, {})
             mat = sm.get("materials", {})
             mat_source = sm.get("source", "")
+            material_source_label = {
+                "ai": "AI材质",
+                "manual": "人工绑定",
+            }.get(mat_source, "默认计价")
+            material_source_note = {
+                "ai": "已按选中的效果图识别材质计价",
+                "manual": "已按人工绑定材质计价",
+            }.get(mat_source, "未匹配效果图材质，使用系统默认材质计价")
 
             wall_mat_name = str(mat.get("wall", mat.get("墙面材质", "乳胶漆")))
             floor_mat_name = str(mat.get("floor", mat.get("地面材质", "地砖")))
@@ -1610,6 +1618,8 @@ async def data_merge(
                 "source": source_label,
                 "material_name": wall_mat_name,
                 "material_source": mat_source,
+                "material_source_label": material_source_label,
+                "material_source_note": material_source_note,
                 "process_name": CATEGORY_PROCESS_MAP.get("墙面工程", ""),
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("墙面工程", ""), 0),
                 # 价格匹配状态只做显式提示，不改变原有兜底单价，避免扩大改动面。
@@ -1634,6 +1644,8 @@ async def data_merge(
                 "source": source_label,
                 "material_name": floor_mat_name,
                 "material_source": mat_source,
+                "material_source_label": material_source_label,
+                "material_source_note": material_source_note,
                 "process_name": CATEGORY_PROCESS_MAP.get("地面工程", ""),
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("地面工程", ""), 0),
                 # 价格匹配状态只做显式提示，不改变原有兜底单价，避免扩大改动面。
@@ -1652,6 +1664,11 @@ async def data_merge(
                 src = it.get("source", "")
                 if src and src not in merged[key].get("source", ""):
                     merged[key]["source"] = merged[key].get("source", "") + " + " + src
+                # 同类项目聚合时，如果后续项有更明确的材质来源说明，保留到聚合结果中。
+                if it.get("material_source") and it.get("material_source") not in str(merged[key].get("material_source", "")):
+                    merged[key]["material_source"] = it.get("material_source", "")
+                    merged[key]["material_source_label"] = it.get("material_source_label", "")
+                    merged[key]["material_source_note"] = it.get("material_source_note", "")
                 # 聚合多条相同项目时，只要任一来源使用了兜底价，就保留“需人工确认”的状态。
                 if not it.get("price_matched", True):
                     merged[key]["price_matched"] = False
