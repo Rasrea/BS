@@ -1595,6 +1595,7 @@ async def data_merge(
             # 墙面项
             source_label = f"CAD工程量 + AI材质识别{'(人工绑定)' if mat_source == 'manual' else ''}" if mat_source else "CAD工程量"
             wall_match = _auto_match_price("墙面工程", wall_mat_name)
+            wall_price_matched = bool(wall_match)
             wall_mat_price = wall_match["material"] if wall_match else 18
             wall_lab_price = wall_match["labor"] if wall_match else 22
             items.append({
@@ -1611,9 +1612,14 @@ async def data_merge(
                 "material_source": mat_source,
                 "process_name": CATEGORY_PROCESS_MAP.get("墙面工程", ""),
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("墙面工程", ""), 0),
+                # 价格匹配状态只做显式提示，不改变原有兜底单价，避免扩大改动面。
+                "price_matched": wall_price_matched,
+                "price_source": "pricing_items" if wall_price_matched else "fallback",
+                "price_warning": "" if wall_price_matched else "未匹配到墙面材质价格，已使用默认单价，请人工确认",
             })
             # 地面项
             floor_match = _auto_match_price("地面工程", floor_mat_name)
+            floor_price_matched = bool(floor_match)
             floor_mat_price = floor_match["material"] if floor_match else 45
             floor_lab_price = floor_match["labor"] if floor_match else 35
             items.append({
@@ -1630,6 +1636,10 @@ async def data_merge(
                 "material_source": mat_source,
                 "process_name": CATEGORY_PROCESS_MAP.get("地面工程", ""),
                 "process_id": proc_name_to_id.get(CATEGORY_PROCESS_MAP.get("地面工程", ""), 0),
+                # 价格匹配状态只做显式提示，不改变原有兜底单价，避免扩大改动面。
+                "price_matched": floor_price_matched,
+                "price_source": "pricing_items" if floor_price_matched else "fallback",
+                "price_warning": "" if floor_price_matched else "未匹配到地面材质价格，已使用默认单价，请人工确认",
             })
 
         # ── 去重聚合：相同空间+相同类目的分项合并 ──
@@ -1642,6 +1652,11 @@ async def data_merge(
                 src = it.get("source", "")
                 if src and src not in merged[key].get("source", ""):
                     merged[key]["source"] = merged[key].get("source", "") + " + " + src
+                # 聚合多条相同项目时，只要任一来源使用了兜底价，就保留“需人工确认”的状态。
+                if not it.get("price_matched", True):
+                    merged[key]["price_matched"] = False
+                    merged[key]["price_source"] = "fallback"
+                    merged[key]["price_warning"] = it.get("price_warning", "未匹配到材质价格，已使用默认单价，请人工确认")
             else:
                 merged[key] = dict(it)
         items = sorted(merged.values(), key=lambda x: (

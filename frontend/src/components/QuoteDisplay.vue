@@ -92,7 +92,7 @@
           <tbody>
             <tr v-for="(item, i) in items" :key="i"
                 class="border-b border-gray-100 hover:bg-gray-50"
-                :class="{ 'bg-yellow-50': editing && editDirty[i] }">
+                :class="{ 'bg-yellow-50': (editing && editDirty[i]) || item.price_matched === false }">
               <td class="py-2 px-3 text-gray-800">{{ item.space_name || '-' }}</td>
               <td class="py-2 px-3 text-gray-600">
                 <select v-if="editing" v-model="item.category"
@@ -104,7 +104,12 @@
               <td class="py-2 px-3">
                 <input v-if="editing" v-model="item.project_name"
                        class="border border-gray-300 rounded px-1 py-0.5 text-xs w-24" />
-                <span v-else class="text-gray-600">{{ item.project_name || '-' }}</span>
+                <template v-else>
+                  <span class="text-gray-600">{{ item.project_name || '-' }}</span>
+                  <div v-if="item.price_matched === false" class="text-[10px] text-yellow-700 mt-0.5">
+                    {{ item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认' }}
+                  </div>
+                </template>
               </td>
               <td class="py-2 px-3 text-right">
                 <input v-if="editing" v-model.number="item.quantity" type="number" step="0.01"
@@ -116,7 +121,14 @@
                 <input v-if="editing" v-model.number="item.material_unit_price" type="number" step="0.01"
                        class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
                        @input="onEdit(i)" />
-                <span v-else class="text-gray-700">¥{{ formatPrice(item.material_unit_price) }}</span>
+                <span v-else class="text-gray-700">
+                  ¥{{ formatPrice(item.material_unit_price) }}
+                  <span v-if="item.price_matched === false"
+                        class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700"
+                        :title="item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认'">
+                    需确认
+                  </span>
+                </span>
               </td>
               <td class="py-2 px-3 text-right">
                 <input v-if="editing" v-model.number="item.labor_unit_price" type="number" step="0.01"
