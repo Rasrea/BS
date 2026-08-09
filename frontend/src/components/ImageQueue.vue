@@ -35,6 +35,11 @@
     </div>
 
     <!-- 队列控制 -->
+    <div v-if="pendingFiles.length > 0"
+         class="mb-2 rounded-lg border px-3 py-2 text-xs"
+         :class="props.drawingId ? 'border-blue-100 bg-blue-50 text-blue-700' : 'border-amber-100 bg-amber-50 text-amber-700'">
+      {{ drawingBindingTip }}
+    </div>
     <div v-if="pendingFiles.length > 0" class="flex items-center gap-3 mb-3">
       <button class="btn-primary text-sm !px-4 !py-2" :disabled="queueRunning"
               @click="startQueue">
@@ -114,6 +119,11 @@ const props = defineProps({
   // 当前 CAD 图纸 ID。为 0 时保持旧行为：效果图只进入历史库，不归属到当前图纸。
   drawingId: { type: Number, default: 0 },
 })
+const drawingBindingTip = computed(() => (
+  props.drawingId
+    ? `本次效果图将归属到当前图纸 #${props.drawingId}，融合报价可在“本次上传”中选择。`
+    : '未选择归属图纸，本次效果图只进入历史库；融合报价需切换到“全部历史”手动选择。'
+))
 
 const dragging = ref(false)
 const input = ref(null)

@@ -182,6 +182,7 @@ const loadingSuggestions = ref(false)
 const suggestionMatches = ref([])
 const confirmedMatches = ref({})  // { "imageId-cadId": true }
 const confirmingMatch = ref({})   // { "imageId-cadId": true }
+const suppressActiveDrawingSync = ref(false)
 
 const cadBindingOptions = computed(() => bindings.value.map((_, i) => i))
 
@@ -285,8 +286,14 @@ async function loadResults() {
   const hasActiveDrawing = activeId && cadResults.value.some(r => Number(r.id) === activeId)
   const nextSelectedId = hasActiveDrawing ? activeId : (!selectedCadId.value ? cadResults.value[0]?.id : selectedCadId.value)
   if (nextSelectedId && Number(selectedCadId.value) !== Number(nextSelectedId)) {
-    selectedCadId.value = nextSelectedId
-    await loadSpaces()
+    const isAutoSelectingHistoricalDrawing = !activeId && !selectedCadId.value
+    if (isAutoSelectingHistoricalDrawing) suppressActiveDrawingSync.value = true
+    try {
+      selectedCadId.value = nextSelectedId
+      await loadSpaces()
+    } finally {
+      if (isAutoSelectingHistoricalDrawing) suppressActiveDrawingSync.value = false
+    }
   }
   // 🌟 加载效果图识别结果：尝试专用接口 + 历史记录回退
   await loadImageResults()
@@ -366,7 +373,9 @@ onMounted(loadResults)
 watch(selectedCadId, async (newId) => {
   // 将融合报价当前选中的图纸同步给首页效果图上传使用。
   // 只同步 drawing_records.id，不改变融合计算、历史报价或其它模块行为。
-  activeDrawingId.value = Number(newId) || 0
+  if (!suppressActiveDrawingSync.value) {
+    activeDrawingId.value = Number(newId) || 0
+  }
   selectedImageIds.value = []
   suggestionMatches.value = []
   confirmedMatches.value = {}
