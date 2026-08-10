@@ -73,107 +73,132 @@
         </div>
       </div>
 
-      <!-- 分项明细 -->
-      <div class="overflow-x-auto" v-if="items.length > 0">
-        <h4 class="text-sm font-medium text-gray-700 mb-2">分项明细</h4>
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-200">
-              <th class="text-left py-2 px-3 text-gray-600 font-medium">空间</th>
-              <th class="text-left py-2 px-3 text-gray-600 font-medium">类别</th>
-              <th class="text-left py-2 px-3 text-gray-600 font-medium">项目</th>
-              <th class="text-left py-2 px-3 text-gray-600 font-medium">材质来源</th>
-              <th class="text-right py-2 px-3 text-gray-600 font-medium">数量</th>
-              <th class="text-right py-2 px-3 text-gray-600 font-medium">材料单价</th>
-              <th class="text-right py-2 px-3 text-gray-600 font-medium">人工单价</th>
-              <th class="text-right py-2 px-3 text-gray-600 font-medium">小计</th>
-              <th v-if="editing" class="text-center py-2 px-3 text-gray-600 font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(item, i) in items" :key="i"
-                class="border-b border-gray-100 hover:bg-gray-50"
-                :class="{ 'bg-yellow-50': (editing && editDirty[i]) || item.price_matched === false }">
-              <td class="py-2 px-3 text-gray-800">{{ item.space_name || '-' }}</td>
-              <td class="py-2 px-3 text-gray-600">
-                <select v-if="editing" v-model="item.category"
-                        class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20">
-                  <option>墙面工程</option><option>地面工程</option><option>吊顶工程</option>
-                </select>
-                <span v-else>{{ item.category || '-' }}</span>
-              </td>
-              <td class="py-2 px-3">
-                <input v-if="editing" v-model="item.project_name"
-                       class="border border-gray-300 rounded px-1 py-0.5 text-xs w-24" />
-                <template v-else>
-                  <span class="text-gray-600">{{ item.project_name || '-' }}</span>
-                  <div v-if="item.price_matched === false" class="text-[10px] text-yellow-700 mt-0.5">
-                    {{ item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认' }}
-                  </div>
-                </template>
-              </td>
-              <td class="py-2 px-3">
-                <span class="text-[10px] px-1.5 py-0.5 rounded"
-                      :class="materialSourceClass(item)"
-                      :title="item.material_source_note || materialSourceText(item)">
-                  {{ item.material_source_label || materialSourceText(item) }}
+      <!-- 空间材质明细 -->
+      <div v-if="items.length > 0">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h4 class="text-sm font-medium text-gray-700">空间材质明细</h4>
+            <p class="text-xs text-gray-400 mt-0.5">按空间汇总墙面/地面材质，用于核对 CAD 空间与 AI 材质匹配。</p>
+          </div>
+          <span class="text-xs text-gray-400">共 {{ groupedMaterialItems.length }} 个空间</span>
+        </div>
+
+        <div class="space-y-3">
+          <div v-for="group in groupedMaterialItems" :key="group.spaceName"
+               class="border border-gray-200 rounded-xl overflow-hidden bg-white">
+            <div class="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 border-b border-gray-100">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="font-medium text-gray-800 truncate">{{ group.spaceName }}</span>
+                <span v-if="group.aiCount > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                  AI {{ group.aiCount }}项
                 </span>
-              </td>
-              <td class="py-2 px-3 text-right">
-                <input v-if="editing" v-model.number="item.quantity" type="number" step="0.01"
-                       class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
-                       @input="onEdit(i)" />
-                <span v-else class="text-gray-700">{{ formatNum(item.quantity) }}</span>
-              </td>
-              <td class="py-2 px-3 text-right">
-                <input v-if="editing" v-model.number="item.material_unit_price" type="number" step="0.01"
-                       class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
-                       @input="onEdit(i)" />
-                <span v-else class="text-gray-700">
-                  ¥{{ formatPrice(item.material_unit_price) }}
-                  <span v-if="item.price_matched === false"
-                        class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700"
-                        :title="item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认'">
-                    需确认
-                  </span>
+                <span v-if="group.warningCount > 0" class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">
+                  {{ group.warningCount }}项需确认
                 </span>
-              </td>
-              <td class="py-2 px-3 text-right">
-                <input v-if="editing" v-model.number="item.labor_unit_price" type="number" step="0.01"
-                       class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
-                       @input="onEdit(i)" />
-                <span v-else class="text-gray-700">¥{{ formatPrice(item.labor_unit_price) }}</span>
-              </td>
-              <td class="py-2 px-3 text-right text-gray-700 font-medium">
-                ¥{{ formatPrice(item.subtotal || (item.quantity * (item.material_unit_price + item.labor_unit_price))) }}
-              </td>
-              <td v-if="editing" class="py-2 px-3 text-center">
-                <select v-model="item.material_name"
-                        class="border border-gray-300 rounded px-1 py-0.5 text-xs w-22"
-                        @change="onMaterialChange(i)">
-                  <option value="">-- 选材料 --</option>
-                  <optgroup label="墙面">
-                    <option value="乳胶漆">乳胶漆</option>
-                    <option value="瓷砖">瓷砖</option>
-                    <option value="墙纸">墙纸</option>
-                    <option value="木饰面">木饰面</option>
-                  </optgroup>
-                  <optgroup label="地面">
-                    <option value="地砖">地砖</option>
-                    <option value="实木地板">实木地板</option>
-                    <option value="复合地板">复合地板</option>
-                    <option value="大理石">大理石</option>
-                  </optgroup>
-                  <optgroup label="顶面">
-                    <option value="石膏板">石膏板</option>
-                    <option value="铝扣板">铝扣板</option>
-                    <option value="乳胶漆">乳胶漆顶面</option>
-                  </optgroup>
-                </select>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </div>
+              <span class="text-xs font-medium text-gray-700 flex-shrink-0">小计 ¥{{ formatPrice(group.subtotal) }}</span>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-gray-100">
+                    <th class="text-left py-2 px-3 text-gray-500 font-medium">类别</th>
+                    <th class="text-left py-2 px-3 text-gray-500 font-medium">项目</th>
+                    <th class="text-left py-2 px-3 text-gray-500 font-medium">材质来源</th>
+                    <th class="text-right py-2 px-3 text-gray-500 font-medium">数量</th>
+                    <th class="text-right py-2 px-3 text-gray-500 font-medium">材料</th>
+                    <th class="text-right py-2 px-3 text-gray-500 font-medium">人工</th>
+                    <th class="text-right py-2 px-3 text-gray-500 font-medium">小计</th>
+                    <th v-if="editing" class="text-center py-2 px-3 text-gray-500 font-medium">材料</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="entry in group.items" :key="entry.index"
+                      class="border-b border-gray-50 last:border-0 hover:bg-gray-50/60"
+                      :class="{ 'bg-yellow-50': (editing && editDirty[entry.index]) || entry.item.price_matched === false }">
+                    <td class="py-2 px-3 text-gray-600">
+                      <select v-if="editing" v-model="entry.item.category"
+                              class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20">
+                        <option>墙面工程</option><option>地面工程</option><option>吊顶工程</option>
+                      </select>
+                      <span v-else>{{ shortCategory(entry.item.category) }}</span>
+                    </td>
+                    <td class="py-2 px-3">
+                      <input v-if="editing" v-model="entry.item.project_name"
+                             class="border border-gray-300 rounded px-1 py-0.5 text-xs w-24" />
+                      <template v-else>
+                        <span class="text-gray-700">{{ entry.item.project_name || '-' }}</span>
+                        <div v-if="entry.item.price_matched === false" class="text-[10px] text-yellow-700 mt-0.5">
+                          {{ entry.item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认' }}
+                        </div>
+                      </template>
+                    </td>
+                    <td class="py-2 px-3">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded"
+                            :class="materialSourceClass(entry.item)"
+                            :title="entry.item.material_source_note || materialSourceText(entry.item)">
+                        {{ entry.item.material_source_label || materialSourceText(entry.item) }}
+                      </span>
+                    </td>
+                    <td class="py-2 px-3 text-right">
+                      <input v-if="editing" v-model.number="entry.item.quantity" type="number" step="0.01"
+                             class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
+                             @input="onEdit(entry.index)" />
+                      <span v-else class="text-gray-700">{{ formatNum(entry.item.quantity) }}</span>
+                    </td>
+                    <td class="py-2 px-3 text-right">
+                      <input v-if="editing" v-model.number="entry.item.material_unit_price" type="number" step="0.01"
+                             class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
+                             @input="onEdit(entry.index)" />
+                      <span v-else class="text-gray-700">
+                        ¥{{ formatPrice(entry.item.material_unit_price) }}
+                        <span v-if="entry.item.price_matched === false"
+                              class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700"
+                              :title="entry.item.price_warning || '未匹配到材质价格，已使用默认单价，请人工确认'">
+                          需确认
+                        </span>
+                      </span>
+                    </td>
+                    <td class="py-2 px-3 text-right">
+                      <input v-if="editing" v-model.number="entry.item.labor_unit_price" type="number" step="0.01"
+                             class="border border-gray-300 rounded px-1 py-0.5 text-xs w-20 text-right"
+                             @input="onEdit(entry.index)" />
+                      <span v-else class="text-gray-700">¥{{ formatPrice(entry.item.labor_unit_price) }}</span>
+                    </td>
+                    <td class="py-2 px-3 text-right text-gray-700 font-medium">
+                      ¥{{ formatPrice(itemSubtotal(entry.item)) }}
+                    </td>
+                    <td v-if="editing" class="py-2 px-3 text-center">
+                      <select v-model="entry.item.material_name"
+                              class="border border-gray-300 rounded px-1 py-0.5 text-xs w-22"
+                              @change="onMaterialChange(entry.index)">
+                        <option value="">-- 选材料 --</option>
+                        <optgroup label="墙面">
+                          <option value="乳胶漆">乳胶漆</option>
+                          <option value="瓷砖">瓷砖</option>
+                          <option value="墙纸">墙纸</option>
+                          <option value="木饰面">木饰面</option>
+                        </optgroup>
+                        <optgroup label="地面">
+                          <option value="地砖">地砖</option>
+                          <option value="实木地板">实木地板</option>
+                          <option value="复合地板">复合地板</option>
+                          <option value="大理石">大理石</option>
+                        </optgroup>
+                        <optgroup label="顶面">
+                          <option value="石膏板">石膏板</option>
+                          <option value="铝扣板">铝扣板</option>
+                          <option value="乳胶漆">乳胶漆顶面</option>
+                        </optgroup>
+                      </select>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 保存状态 -->
@@ -263,8 +288,42 @@ const displayTotals = computed(() => {
 
 const totalArea = computed(() => props.data?.data?.total_area || 0)
 
+const groupedMaterialItems = computed(() => {
+  const groups = new Map()
+  items.value.forEach((item, index) => {
+    const spaceName = item.space_name || '未命名空间'
+    if (!groups.has(spaceName)) {
+      groups.set(spaceName, {
+        spaceName,
+        items: [],
+        subtotal: 0,
+        aiCount: 0,
+        warningCount: 0,
+      })
+    }
+    const group = groups.get(spaceName)
+    group.items.push({ item, index })
+    group.subtotal += itemSubtotal(item)
+    if (item.material_source === 'ai') group.aiCount += 1
+    if (item.price_matched === false) group.warningCount += 1
+  })
+  return Array.from(groups.values())
+})
+
 function formatNum(v) { return v ? Number(v).toFixed(2) : '-' }
 function formatPrice(v) { return v ? Number(v).toLocaleString() : '0' }
+
+function itemSubtotal(item) {
+  if (item.subtotal !== undefined && item.subtotal !== null) return Number(item.subtotal) || 0
+  const q = Number(item.quantity) || 0
+  const mp = Number(item.material_unit_price) || 0
+  const lp = Number(item.labor_unit_price) || 0
+  return q * (mp + lp)
+}
+
+function shortCategory(category) {
+  return String(category || '-').replace('工程', '')
+}
 
 function materialSourceText(item) {
   if (item.material_source === 'ai') return 'AI材质'
