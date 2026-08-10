@@ -976,6 +976,7 @@ async def analyze_image(
     crop_enabled: str = Form("true"),
     drawing_id: int = Form(0),
     file_count: int = Form(1),
+    batch_id: str = Form(""),
 ):
     """
     接口2：单张效果图材质/空间同步识别
@@ -1101,7 +1102,16 @@ async def analyze_image(
 
     # 写入持久类 ImageResult 
     from models.analysis_models import ImageResult, set_latest_image_result
-     
+    
+    # 创建 ImageResult 对象并保存到内存
+    image_result = ImageResult(
+        filename=image_file.filename,
+        space_name=recognized_space,
+        wall_material=wall_mat,
+        floor_material=floor_mat,
+        ceiling_material=ceiling_mat,
+        confidence=confidence,
+    )
     
     result = {
         "image_result_id": img_id,

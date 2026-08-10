@@ -227,6 +227,8 @@ async function startQueue(drawingIdOverride = null) {
 
   const files = [...pendingFiles.value]
   const effectiveDrawingId = Number(drawingIdOverride ?? props.drawingId) || 0
+  // 生成唯一批次ID
+  const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`  
 
   for (let i = 0; i < files.length; i++) {
     const item = files[i]
@@ -238,7 +240,8 @@ async function startQueue(drawingIdOverride = null) {
         // 多张队列与单张上传使用同一归属规则：有 CAD 图纸 ID 才绑定到当前图纸。
         drawingId: effectiveDrawingId,
         model: props.model,
-        fileCount: files.length,
+        fileCount: files.length, // 该批次效果图数量
+        batchId: batchId,  // 传递批次ID
       })
       results.value.push({
         success: res.success,
