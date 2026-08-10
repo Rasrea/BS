@@ -1101,7 +1101,7 @@ async def analyze_image(
     )
 
     # 写入持久类 ImageResult 
-    from models.analysis_models import ImageResult, set_latest_image_result
+    from models.analysis_models import ImageResult, append_image_result, clear_image_results
     
     # 创建 ImageResult 对象并保存到内存
     image_result = ImageResult(
@@ -1112,6 +1112,18 @@ async def analyze_image(
         ceiling_material=ceiling_mat,
         confidence=confidence,
     )
+    
+    # 按 batch_id 分组保存（批次追踪）
+    batch_key = batch_id if batch_id else f"batch_{file_count}"
+    
+    # 新批次开始时清空旧数据，只保留最新批次
+    from models.analysis_models import _latest_image_registry
+    if not _latest_image_registry or batch_key not in _latest_image_registry:
+        clear_image_results()
+    append_image_result(batch_key, image_result)
+    
+    logger.info("📷 已保存 ImageResult: id=%s, batch_id=%s, file_count=%d", 
+                image_result.id, batch_key, file_count)
     
     result = {
         "image_result_id": img_id,
@@ -1135,17 +1147,27 @@ async def analyze_image(
 
 @app.get("/api/analyze/latest")
 async def get_latest_analysis():
-    """获取最新的 CAD 识别结果"""
-    from backend.models.analysis_models import get_latest_cad_spaces
+    """获取最新的 CAD 识别结果和效果图识别结果"""
+    from models.analysis_models import get_latest_cad_spaces, _latest_image_registry
+    
+    # CAD 识别结果
     cad_spaces = get_latest_cad_spaces()
     if not cad_spaces:
         return err(404, "暂无 CAD 识别结果，请先上传图纸进行分析")
     
     total_area = sum(s.area_sqm for s in cad_spaces)
+    
+    # 效果图识别结果（只返回最新批次）
+    image_results = []
+    if _latest_image_registry:
+        latest_batch_id = max(_latest_image_registry.keys())
+        image_results = [r.to_dict() for r in _latest_image_registry[latest_batch_id]]
+    
     return ok({
-        "spaces": [s.to_dict() for s in cad_spaces],
+        "cad_spaces": [s.to_dict() for s in cad_spaces],
         "space_count": len(cad_spaces),
         "total_area": round(total_area, 2),
+        "image_results": image_results,
     })
 
 @app.post("/api/vision_test")

@@ -26,25 +26,29 @@ def clear_latest_cad_spaces() -> None:
     global _latest_cad_spaces
     _latest_cad_spaces = None
 
-# ─────────────────── ImageResult 注册表（按 drawing_id 分组）──────────────────
+# ─────────────────── ImageResult 注册表（按 batch_id 分组）──────────────────
 _latest_image_registry: Dict[str, List['ImageResult']] = {}
 
 
-def get_latest_image_results(drawing_id: str = "default") -> List['ImageResult']:
-    """获取指定批次（drawing_id）的 ImageResult 列表"""
-    return _latest_image_registry.get(drawing_id, [])
+def get_latest_image_results(batch_id: str = "default") -> List['ImageResult']:
+    """获取指定批次（batch_id）的 ImageResult 列表"""
+    return _latest_image_registry.get(batch_id, [])
 
 
-def set_latest_image_result(drawing_id: str, results: List['ImageResult']) -> None:
+def set_latest_image_result(batch_id: str, results: List['ImageResult']) -> None:
     """设置指定批次的 ImageResult 列表"""
-    _latest_image_registry[drawing_id] = results
+    _latest_image_registry[batch_id] = results
 
 
-def append_image_result(drawing_id: str, result: 'ImageResult') -> None:
+def append_image_result(batch_id: str, result: 'ImageResult') -> None:
     """向指定批次追加一个 ImageResult"""
-    if drawing_id not in _latest_image_registry:
-        _latest_image_registry[drawing_id] = []
-    _latest_image_registry[drawing_id].append(result)
+    if batch_id not in _latest_image_registry:
+        _latest_image_registry[batch_id] = []
+    _latest_image_registry[batch_id].append(result)
+
+def clear_image_results() -> None:
+    """清空所有 ImageResult 数据"""
+    _latest_image_registry.clear()
 
 @dataclass
 class CadSpace:
