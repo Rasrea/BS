@@ -127,26 +127,11 @@
           </div>
         </div>
 
-        <!-- 上传模式选择 -->
-        <div class="flex items-center gap-2 mb-3">
-          <button @click="uploadMode='single'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-            :class="uploadMode==='single' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
-            单张上传
-          </button>
-          <button @click="uploadMode='multi'" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-            :class="uploadMode==='multi' ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">
-            多张队列
-          </button>
-          <span v-if="uploadMode==='single'" class="text-xs text-gray-300 mx-1">|</span>
-          <button v-if="uploadMode==='single'"
-                  @click="singleFormat = singleFormat === 'image' ? 'pdf' : 'image'"
-                  class="text-xs px-2 py-1 rounded font-medium transition-colors"
-                  :class="singleFormat==='image' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'">
-            {{ singleFormat === 'image' ? '🖼️ 图片' : '📄 PDF' }}
-          </button>
+        <!-- 统一上传说明 -->
+        <div class="text-xs text-gray-500 bg-white/70 border border-gray-100 rounded-lg px-3 py-2 mb-3">
+          上传 1 个 CAD 图纸 + 任意数量效果图后，点击“开始分析”会先解析 CAD，再串行识别全部效果图。
         </div>
 
-        <!-- 双上传区 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
             <!-- 只有当前 cadFile 和保存标注时的文件签名一致，才显示标注数量。 -->
@@ -159,30 +144,13 @@
             />
           </div>
           <div>
-            <!-- 单张上传模式：图片 / PDF 二选一 -->
-            <ImageUploader
-              v-if="uploadMode==='single' && singleFormat==='image'"
-              @file-change="onImageFileChange"
-              @preview="openImagePreview"
-            />
-            <div v-else-if="uploadMode==='single' && singleFormat==='pdf'" class="card">
-              <label class="block text-sm font-medium text-gray-700 mb-2">📄 上传PDF施工图</label>
-              <input type="file" accept=".pdf" @change="onPdfFileChange"
-                     class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100" />
-              <p v-if="pdfFile" class="text-xs text-green-600 mt-2 flex items-center gap-2">
-                ✅ {{ pdfFile.name }}
-                <button class="text-indigo-500 hover:text-indigo-700 font-medium" @click="previewPdf">🔍 预览</button>
-              </p>
-              <button v-if="pdfFile && !pdfLoading" class="btn-primary text-xs mt-3" @click="startPdfAnalysis">
-                🚀 识别PDF
-              </button>
-              <p v-if="pdfLoading" class="text-xs text-primary-600 mt-2 animate-pulse">⏱ PDF解析中...</p>
-            </div>
-            <!-- 多张队列模式（同时支持CAD和效果图） -->
             <ImageQueue
-              v-else-if="uploadMode==='multi'"
+              ref="imageQueueRef"
               :drawing-id="activeDrawingId || cadResult?.data?.drawing_id || 0"
+              :model="selectedModel"
               @results-update="onQueueResults"
+              @pending-update="onQueuePendingUpdate"
+              @progress-update="onQueueProgressUpdate"
             />
           </div>
         </div>
@@ -190,7 +158,7 @@
         <!-- 操作按钮区 -->
         <div class="card mb-4">
           <div class="flex items-center gap-4 flex-wrap">
-            <button class="btn-primary" :disabled="!(cadFile || imageFile) || loading"
+            <button class="btn-primary" :disabled="!(cadFile || imageFile || queuePendingCount > 0) || loading"
                     @click="startAnalysis">
               <svg v-if="loading" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
@@ -198,6 +166,11 @@
               </svg>
               {{ loading ? '⏳ 执行中...' : '🚀 开始分析' }}
             </button>
+            <span v-if="queuePendingCount > 0"
+                  class="text-xs rounded-lg border px-3 py-2"
+                  :class="imageQueueBindingTipClass">
+              {{ imageQueueBindingTip }}
+            </span>
             <!-- 状态提示 -->
             <div v-if="sysStatus" class="flex items-center gap-3 ml-auto">
               <span class="text-xs text-gray-400">系统: {{ sysStatus.task_state }}</span>
@@ -225,6 +198,23 @@
               <!-- 耗时 -->
               <span v-if="step.duration" class="text-[10px] text-gray-400 ml-auto">{{ step.duration }}</span>
             </div>
+          </div>
+
+          <div v-if="queueProgress.running || queueProgress.total > 0" class="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-medium text-gray-600">
+                {{ queueProgress.running ? '效果图串行识别中' : '效果图串行识别完成' }}
+              </span>
+              <span class="text-xs text-gray-400">{{ queueProgress.finished }}/{{ queueProgress.total }}</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div class="bg-primary-500 h-2 rounded-full transition-all duration-300"
+                   :style="{ width: queueProgress.total > 0 ? (queueProgress.finished / queueProgress.total * 100) + '%' : '0%' }"></div>
+            </div>
+            <p v-if="queueProgress.currentName" class="text-xs text-primary-600 mt-2 animate-pulse">
+              正在识别：{{ queueProgress.currentName }}
+            </p>
+            <p v-if="queueProgress.error" class="text-xs text-red-500 mt-1">{{ queueProgress.error }}</p>
           </div>
         </div>
 
@@ -364,7 +354,6 @@
 import { ref, onMounted, computed, provide } from 'vue'
 import API from './services/api.js'
 import CadUploader from './components/CadUploader.vue'
-import ImageUploader from './components/ImageUploader.vue'
 import ImageQueue from './components/ImageQueue.vue'
 import CadResultCard from './components/CadResultCard.vue'
 import ImageResultCard from './components/ImageResultCard.vue'
@@ -396,8 +385,6 @@ const tabs = [
 ]
 
 const activeTab = ref('home')
-const uploadMode = ref('single')
-const singleFormat = ref('image')
 const projectName = ref('装修工程')
 const cadFile = ref(null)
 const imageFile = ref(null)
@@ -407,7 +394,26 @@ const cadResult = ref(null)
 const imageResult = ref(null)
 const sysStatus = ref(null)
 const historyRef = ref(null)
+const imageQueueRef = ref(null)
+const queuePendingCount = ref(0)
+const queueProgress = ref({ running: false, finished: 0, total: 0, currentName: '', error: '' })
 const progressSteps = ref([])
+
+const imageQueueBindingTip = computed(() => {
+  const drawingId = activeDrawingId.value || cadResult.value?.data?.drawing_id || 0
+  if (drawingId) {
+    return `本次效果图将归属到当前图纸 #${drawingId}，融合报价可在“本次上传”中选择。`
+  }
+  if (cadFile.value) {
+    return '已选择 CAD 图纸；点击“开始分析”后会先解析 CAD，再归属到本次图纸。'
+  }
+  return '未选择归属图纸，本次效果图只进入历史库。'
+})
+const imageQueueBindingTipClass = computed(() => (
+  activeDrawingId.value || cadResult.value?.data?.drawing_id || cadFile.value
+    ? 'border-blue-100 bg-blue-50 text-blue-700'
+    : 'border-amber-100 bg-amber-50 text-amber-700'
+))
 
 // 🌟 刷新键：分析完成后+1，子组件watch此值自动重新加载数据
 const refreshKey = ref(0)
@@ -610,6 +616,7 @@ async function onCadFileChange(f) {
   cadFile.value = f
   cadDone.value = !!f
   cadResult.value = null
+  activeDrawingId.value = 0
   clearSavedMeasurementResult()
   analysisDone.value = false
 }
@@ -641,6 +648,20 @@ function onQueueResults(results) {
     refreshKey.value++  // 🌟 通知子组件刷新
   }
 }
+function onQueuePendingUpdate(count) {
+  queuePendingCount.value = count
+  imgDone.value = count > 0
+  analysisDone.value = false
+}
+function onQueueProgressUpdate(progress) {
+  queueProgress.value = {
+    running: !!progress.running,
+    finished: Number(progress.finished) || 0,
+    total: Number(progress.total) || 0,
+    currentName: progress.currentName || '',
+    error: progress.error || '',
+  }
+}
 
 async function clearFiles() {
   // 后端同步删除临时文件
@@ -651,6 +672,10 @@ async function clearFiles() {
   imageFile.value = null
   cadResult.value = null
   imageResult.value = null
+  activeDrawingId.value = 0
+  imageQueueRef.value?.clearAll?.()
+  queuePendingCount.value = 0
+  queueProgress.value = { running: false, finished: 0, total: 0, currentName: '', error: '' }
   showImagePreview.value = false
   imagePreviewUrl.value = ''
   clearSavedMeasurementResult()
@@ -713,6 +738,7 @@ function onMeasurementSaved(result) {
 async function startAnalysis() {
   loading.value = true
   progressSteps.value = []
+  queueProgress.value = { running: false, finished: 0, total: 0, currentName: '', error: '' }
 
   if (cadFile.value) {
     analysisType.value = 'cad'
@@ -746,6 +772,22 @@ async function startAnalysis() {
       setStepDone('📐 计算面积和工程量...', '失败')
     }
 
+  }
+
+  if (imageQueueRef.value?.hasPendingFiles?.()) {
+    const canRunImageQueue = !cadFile.value || cadResult.value?.success
+    const drawingId = cadResult.value?.success
+      ? (cadResult.value?.data?.drawing_id || 0)
+      : (!cadFile.value ? activeDrawingId.value || 0 : 0)
+    if (canRunImageQueue) {
+      analysisType.value = 'ai'
+      addStep('串行识别多张效果图...')
+      setStepActive('串行识别多张效果图...')
+      const t0 = Date.now()
+      await imageQueueRef.value.startQueue(drawingId)
+      const dur = ((Date.now() - t0) / 1000).toFixed(1) + 's'
+      setStepDone('串行识别多张效果图...', dur)
+    }
   }
 
   if (imageFile.value) {
