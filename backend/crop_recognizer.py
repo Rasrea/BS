@@ -165,8 +165,8 @@ class CropRecognizer:
             "model_used": model,
             "error": "",
             "timing": timings,
-            "debug": {
-                "crop_images": crop_paths,
-                "crop_dir": crop_debug_dir,
-            },
+            # "debug": {
+            #     "crop_images": crop_paths,
+            #     "crop_dir": crop_debug_dir,
+            # },
         }

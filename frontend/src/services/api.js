@@ -81,11 +81,13 @@ export const API = {
   },
 
   // === 效果图识别 (接口2) ===
-  async analyzeImage(file, { model = '', cropEnabled = true, drawingId = 0 } = {}) {
+  async analyzeImage(file, { model = '', cropEnabled = true, drawingId = 0, fileCount = 1 } = {}) {
     const fd = new FormData()
     fd.append('image_file', file)
     fd.append('model', model)  // 模型名称
     fd.append('crop_enabled', cropEnabled ? 'true' : 'false')  // 是否图像裁剪
+    fd.append('file_count', String(fileCount))  // 本次上传的文件总数
+
     // drawing_id 可选：有当前 CAD 图纸时传入，用于把效果图识别结果归属到当前图纸。
     // 不传或为 0 时保持旧行为，记录只会出现在“全部历史”模式。
     if (drawingId) fd.append('drawing_id', String(drawingId))

@@ -238,6 +238,7 @@ async function startQueue(drawingIdOverride = null) {
         // 多张队列与单张上传使用同一归属规则：有 CAD 图纸 ID 才绑定到当前图纸。
         drawingId: effectiveDrawingId,
         model: props.model,
+        fileCount: files.length,
       })
       results.value.push({
         success: res.success,
