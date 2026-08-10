@@ -113,12 +113,12 @@ class CropRecognizer:
         crops["full"] = full_img_b64
 
         # ====== 步骤2：保存裁剪图片（调试用）=====
-        crop_paths, crop_debug_dir = "", ""
-        t_save = time.time()
-        crop_paths, crop_debug_dir = self.save_crop_images(
-            crops, upload_dir, task_id
-        )
-        timings["store_crop_img"] = round(time.time() - t_save, 3)
+        # crop_paths, crop_debug_dir = "", ""
+        # t_save = time.time()
+        # crop_paths, crop_debug_dir = self.save_crop_images(
+        #     crops, upload_dir, task_id
+        # )
+        # timings["store_crop_img"] = round(time.time() - t_save, 3)
 
         # ====== 步骤3：分区域推理 ======
         crop_results = {}

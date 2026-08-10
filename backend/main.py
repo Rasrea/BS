@@ -792,6 +792,7 @@ async def analyze_full(
     measurement_id: str = Form(None),
 ):
     """CAD/PDF 解析与报价。上传的源文件为临时文件，解析完成后即被删除。"""
+    
     if not cad_file:
         return err(400, "请上传CAD文件（.dxf/.dwg/.pdf）")
 
@@ -913,6 +914,11 @@ async def analyze_full(
             await db.add_cad_result(drawing_id, s.get("name", ""), area, length, width)
         await db.update_drawing_parse(drawing_id, "completed", {"spaces_count": len(spaces), "total_area": total_area})
 
+        # 写入持久类 CadSpace中（只保存最新一次识别结果）
+        from models.analysis_models import set_latest_cad_spaces, dict_to_cadspace
+        cad_spaces = [dict_to_cadspace(s) for s in spaces]
+        set_latest_cad_spaces(cad_spaces)
+    
         result = {
             "drawing_id": drawing_id,
             "spaces": spaces,
@@ -969,6 +975,7 @@ async def analyze_image(
     model: str = Form(""),
     crop_enabled: str = Form("true"),
     drawing_id: int = Form(0),
+    file_count: int = Form(1),
 ):
     """
     接口2：单张效果图材质/空间同步识别
@@ -977,7 +984,7 @@ async def analyze_image(
     状态约束：仅idle可调用，占用ai_running锁
     """
     logger.info("🚀 /api/analyze called")
-    logger.info("📷 filename=%s", image_file.filename)
+    logger.info("📷 filename=%s, file_count=%d", image_file.filename, file_count)
 
     if not image_file:
         return err(400, "\u8bf7\u4e0a\u4f20\u6548\u679c\u56fe\uff08jpg/png/webp\uff09")
@@ -1092,6 +1099,10 @@ async def analyze_image(
         drawing_id=drawing_id,
     )
 
+    # 写入持久类 ImageResult 
+    from models.analysis_models import ImageResult, set_latest_image_result
+     
+    
     result = {
         "image_result_id": img_id,
         "filename": image_file.filename,
@@ -1111,6 +1122,21 @@ async def analyze_image(
         result["warning"] = recognition_result["error"]
 
     return ok(result, task_status=STATE_IDLE)
+
+@app.get("/api/analyze/latest")
+async def get_latest_analysis():
+    """获取最新的 CAD 识别结果"""
+    from backend.models.analysis_models import get_latest_cad_spaces
+    cad_spaces = get_latest_cad_spaces()
+    if not cad_spaces:
+        return err(404, "暂无 CAD 识别结果，请先上传图纸进行分析")
+    
+    total_area = sum(s.area_sqm for s in cad_spaces)
+    return ok({
+        "spaces": [s.to_dict() for s in cad_spaces],
+        "space_count": len(cad_spaces),
+        "total_area": round(total_area, 2),
+    })
 
 @app.post("/api/vision_test")
 async def vision_test(
@@ -1730,6 +1756,90 @@ async def data_merge(
     finally:
         await task_state.release()
 
+@app.get("/api/analysis/latest")
+async def get_latest_analysis():
+    """
+    读取最新一次 CAD 识别 + 效果图识别结果。
+    返回值：{ cad: {...}, images: [...], has_cad, has_image }
+    - cad 为空时 images 仍可能返回全局最新的效果图识别结果。
+    """
+    
+    try:
+        # ── 1. 最新图纸记录（CAD 识别主体）──
+        row = await db.fetchone(
+            "SELECT * FROM drawing_records WHERE is_deleted=0 ORDER BY id DESC LIMIT 1"
+        )
+        if not row:
+            return ok({
+                "cad": None,
+                "images": [],
+                "has_cad": False,
+                "has_image": False,
+            })
+
+        drawing = dict(row)
+        drawing_id = drawing["id"]
+
+        # ── 2. 解析 cad_result_json 快照（报价等字段）──
+        snapshot = drawing.get("cad_result_json") or "{}"
+        if isinstance(snapshot, str):
+            try:
+                snapshot = json.loads(snapshot)
+            except Exception:
+                snapshot = {}
+
+        # ── 3. CAD 空间明细 ──
+        cad_spaces = await db.get_cad_results(drawing_id)
+
+        cad = {
+            "drawing_id": drawing_id,
+            "filename": drawing.get("filename"),
+            "parse_status": drawing.get("parse_status"),
+            "upload_time": drawing.get("upload_time"),
+            "spaces": cad_spaces,
+            "spaces_count": snapshot.get("spaces_count", len(cad_spaces)),
+            "total_area": snapshot.get("total_area", 0),
+            # 注意：报价字段旧版本未持久化，此处可能为 None，前端需兜底
+            "unit_price": snapshot.get("unit_price"),
+            "base_price": snapshot.get("base_price"),
+            "final_price": snapshot.get("final_price"),
+            "parse_method": snapshot.get("parse_method", ""),
+            "needs_manual_review": snapshot.get("needs_manual_review", False),
+        }
+
+        # ── 4. 最新效果图：优先该图纸关联，其次全局最新 ──
+        image_rows = await db.get_image_results_by_drawing(drawing_id)
+        if not image_rows:
+            image_rows = await db.get_image_results(limit=10)
+
+        images = []
+        for r in image_rows:
+            material_info = r.get("material_info", {})
+            if isinstance(material_info, str):
+                try:
+                    material_info = json.loads(material_info)
+                except Exception:
+                    material_info = {}
+            images.append({
+                "image_result_id": r["id"],
+                "drawing_id": r.get("drawing_id", 0),
+                "recognized_space": r.get("recognized_space", ""),
+                "material_info": material_info,
+                "wall_material": material_info.get("wall", ""),
+                "floor_material": material_info.get("floor", ""),
+                "ceiling_material": material_info.get("ceiling", ""),
+                "confidence": r.get("confidence", 0),
+                "create_time": r.get("create_time"),
+            })
+
+        return ok({
+            "cad": cad,
+            "images": images,
+            "has_cad": True,
+            "has_image": len(images) > 0,
+        })
+    except Exception as e:
+        return err(500, f"读取最新识别结果失败: {str(e)}")
 
 # ─────────────────── 接口：报价项编辑+重算 ───────────────────
 
