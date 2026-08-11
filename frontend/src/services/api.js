@@ -97,6 +97,26 @@ export const API = {
   },
 
   // === 数据融合 (接口3) ===
+  async getCurrentFusionData() {
+    try {
+      const { data } = await api.get('/analyze/latest', { timeout: 30000 })
+      return data
+    } catch (e) { return handleError(e) }
+  },
+  async clearCurrentFusionData() {
+    try {
+      const { data } = await api.post('/analyze/latest/clear', {}, { timeout: 30000 })
+      return data
+    } catch (e) { return handleError(e) }
+  },
+  async quoteLatestFusion(manualBindings = []) {
+    try {
+      const fd = new FormData()
+      fd.append('manual_bindings', JSON.stringify(manualBindings))
+      const { data } = await api.post('/fusion/quote_latest', fd, { timeout: 30000 })
+      return data
+    } catch (e) { return handleError(e) }
+  },
   async dataMerge(cadResultId, imageResultIds = [], manualBindings = []) {
     try {
       const fd = new FormData()
