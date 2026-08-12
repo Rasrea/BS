@@ -48,52 +48,92 @@
         当前批次暂无 CAD 空间，请先在图纸分析页点击开始分析。
       </div>
 
-      <div v-else class="grid grid-cols-1 xl:grid-cols-[1fr_1fr] gap-4">
-        <section class="rounded-2xl border border-green-100 bg-gradient-to-br from-green-50 to-white overflow-hidden">
-          <div class="flex items-center justify-between px-3 py-2 border-b border-green-100/70">
-            <h4 class="text-sm font-semibold text-green-800">已自动匹配</h4>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-white text-green-700 border border-green-100 shadow-sm">{{ autoRows.length }} 项</span>
-          </div>
-          <div v-if="autoRows.length === 0" class="text-sm text-green-700/70 px-4 py-8 text-center">暂无自动匹配成功项。</div>
-          <div v-else class="p-2 space-y-1.5 max-h-[520px] overflow-y-auto">
-            <div v-for="row in autoRows" :key="row.key" class="rounded-lg border bg-white px-2.5 py-1.5 shadow-sm">
-              <div class="grid grid-cols-[76px_42px_58px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_42px] items-center gap-2 text-xs whitespace-nowrap">
-                <span class="font-semibold text-gray-800 text-sm truncate">{{ row.space_name }}</span>
-                <span class="px-1.5 py-0.5 rounded-full text-center" :class="statusClass(row.status)">{{ shortStatusText(row.status) }}</span>
-                <span class="text-gray-400">{{ formatNum(row.area) }}㎡</span>
-                <MaterialPill v-if="hasMaterialResult(row)" label="墙面" :value="row.material.wall || '默认'" tone="wall" />
-                <MaterialPill v-if="hasMaterialResult(row)" label="地面" :value="row.material.floor || '默认'" tone="floor" />
-                <MaterialPill v-if="hasMaterialResult(row)" label="顶面" :value="row.material.ceiling || '默认'" tone="ceiling" />
-                <span v-if="!hasMaterialResult(row)" class="col-span-3 text-gray-600 truncate">{{ row.candidateReason }}</span>
-                <button type="button" class="text-xs text-blue-600 hover:text-blue-800 text-right" @click="openEditor(row)">编辑</button>
-              </div>
+      <div v-else class="space-y-5">
+        <section v-if="autoRows.length" class="rounded-xl border border-green-100 overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-2.5 bg-green-50 border-b border-green-100">
+            <div>
+              <h4 class="text-sm font-semibold text-green-800">自动识别完成</h4>
             </div>
+            <span class="text-xs text-green-700">{{ autoRows.length }} 个空间</span>
           </div>
+          <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">空间名称</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">面积(㎡)</th>
+              <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">匹配状态</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-blue-700 bg-blue-50">墙面材质</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-green-700 bg-green-50">地面材质</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-purple-700 bg-purple-50">顶面材质</th>
+              <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 bg-white">
+            <tr v-for="row in autoRows" :key="row.key"
+                class="hover:bg-gray-50/60 transition-colors"
+                :class="{ 'bg-yellow-50/30': row.status === 'candidate' || row.status === 'unmatched' }">
+              <td class="px-4 py-2.5 font-medium text-gray-800 whitespace-nowrap">{{ row.space_name }}</td>
+              <td class="px-4 py-2.5 text-right text-gray-600 whitespace-nowrap">{{ formatNum(row.area) }}</td>
+              <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium" :class="statusClass(row.status)">
+                  {{ shortStatusText(row.status) }}
+                </span>
+              </td>
+              <td class="px-3 py-2.5 text-xs text-blue-700 bg-blue-50/50 max-w-[180px] truncate" :title="row.material.wall || ''">
+                {{ row.material.wall || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-xs text-green-700 bg-green-50/50 max-w-[180px] truncate" :title="row.material.floor || ''">
+                {{ row.material.floor || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-xs text-purple-700 bg-purple-50/50 max-w-[180px] truncate" :title="row.material.ceiling || ''">
+                {{ row.material.ceiling || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                <button type="button" class="text-xs text-blue-600 hover:text-blue-800 hover:underline" @click="openEditor(row)">
+                  修改识别
+                </button>
+              </td>
+            </tr>
+          </tbody>
+          </table>
         </section>
 
-        <section class="rounded-2xl border border-yellow-100 bg-gradient-to-br from-yellow-50 to-white overflow-hidden">
-          <div class="flex items-center justify-between px-3 py-2 border-b border-yellow-100/70">
-            <h4 class="text-sm font-semibold text-yellow-800">需人工处理</h4>
-            <span class="text-xs px-2.5 py-1 rounded-full bg-white text-yellow-700 border border-yellow-100 shadow-sm">{{ manualNeededRows.length }} 项</span>
-          </div>
-          <div v-if="manualNeededRows.length === 0" class="px-4 py-8 bg-white text-center">
-            <div class="text-sm font-medium text-green-700">全部空间已自动融合</div>
-            <div class="text-xs text-gray-400 mt-1">可以直接生成报价。</div>
-          </div>
-          <div v-else class="p-2 space-y-1.5 max-h-[520px] overflow-y-auto">
-            <div v-for="row in manualNeededRows" :key="row.key" class="rounded-lg border bg-white px-2.5 py-1.5 shadow-sm">
-              <div class="grid grid-cols-[76px_42px_58px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.15fr)_42px] items-center gap-2 text-xs whitespace-nowrap">
-                <span class="font-semibold text-gray-800 text-sm truncate">{{ row.space_name }}</span>
-                <span class="px-1.5 py-0.5 rounded-full text-center" :class="statusClass(row.status)">{{ shortStatusText(row.status) }}</span>
-                <span class="text-gray-400">{{ formatNum(row.area) }}㎡</span>
-                <MaterialPill v-if="hasMaterialResult(row)" label="墙面" :value="row.material.wall || '默认'" tone="wall" />
-                <MaterialPill v-if="hasMaterialResult(row)" label="地面" :value="row.material.floor || '默认'" tone="floor" />
-                <MaterialPill v-if="hasMaterialResult(row)" label="顶面" :value="row.material.ceiling || '默认'" tone="ceiling" />
-                <span v-if="!hasMaterialResult(row)" class="col-span-3 text-gray-600 truncate">{{ row.candidateReason }}</span>
-                <button type="button" class="text-xs text-blue-600 hover:text-blue-800 text-right" @click="openEditor(row)">编辑</button>
-              </div>
+        <section v-if="manualNeededRows.length" class="rounded-xl border border-orange-100 overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-2.5 bg-orange-50 border-b border-orange-100">
+            <div>
+              <h4 class="text-sm font-semibold text-orange-800">待人工匹配</h4>
             </div>
+            <span class="text-xs text-orange-700">{{ manualNeededRows.length }} 个空间</span>
           </div>
+          <table class="min-w-full divide-y divide-gray-200 text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">空间名称</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">面积(㎡)</th>
+                <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">匹配状态</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-blue-700 bg-blue-50">墙面材质</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-green-700 bg-green-50">地面材质</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-purple-700 bg-purple-50">顶面材质</th>
+                <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 bg-white">
+              <tr v-for="row in manualNeededRows" :key="row.key"
+                  class="hover:bg-orange-50/40 transition-colors">
+                <td class="px-4 py-2.5 font-medium text-gray-800 whitespace-nowrap">{{ row.space_name }}</td>
+                <td class="px-4 py-2.5 text-right text-gray-600 whitespace-nowrap">{{ formatNum(row.area) }}</td>
+                <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium" :class="statusClass(row.status)">{{ shortStatusText(row.status) }}</span>
+                </td>
+                <td class="px-3 py-2.5 text-xs text-blue-700 bg-blue-50/50 max-w-[180px] truncate">{{ row.material.wall || '—' }}</td>
+                <td class="px-3 py-2.5 text-xs text-green-700 bg-green-50/50 max-w-[180px] truncate">{{ row.material.floor || '—' }}</td>
+                <td class="px-3 py-2.5 text-xs text-purple-700 bg-purple-50/50 max-w-[180px] truncate">{{ row.material.ceiling || '—' }}</td>
+                <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                  <button type="button" class="text-xs text-blue-600 hover:text-blue-800 hover:underline" @click="openEditor(row)">修改识别</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </section>
       </div>
 
@@ -106,62 +146,85 @@
       </div>
     </div>
 
-    <div v-if="imageResults.length > 0" class="card">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">当前批次效果图识别</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-        <div v-for="image in imageResults" :key="getImageKey(image)" class="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-gray-800">{{ image.space_name || image.recognized_space || '未识别空间' }}</span>
-            <span class="text-xs text-gray-400">{{ formatConfidence(image.confidence) }}</span>
-          </div>
-          <div class="text-xs text-gray-400 mt-1 truncate">{{ image.filename || image.original_filename || image.id }}</div>
-          <div class="text-xs text-gray-600 mt-2 truncate">{{ materialSummary(image) || '未识别到具体材质' }}</div>
-        </div>
-      </div>
-    </div>
-
     <div v-if="editingRow" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div class="w-full max-w-3xl rounded-2xl bg-white shadow-xl border border-gray-100">
+      <div class="w-full max-w-4xl rounded-xl bg-white shadow-xl border border-gray-100 overflow-hidden">
         <div class="flex items-start justify-between gap-4 px-5 py-4 border-b border-gray-100">
           <div>
             <h3 class="text-base font-semibold text-gray-800">编辑空间材质：{{ editingRow.space_name }}</h3>
-            <p class="text-xs text-gray-400 mt-1">先一键套用整套材质，再按需微调墙、地、顶。</p>
+            <p class="text-xs text-gray-400 mt-1">从本批次识别结果中选择，或在下方单独修改墙、地、顶材质。</p>
           </div>
           <button class="text-gray-400 hover:text-gray-600" @click="closeEditor">×</button>
         </div>
 
-        <div class="px-5 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
-          <div class="rounded-2xl border border-gray-100 bg-gradient-to-br from-slate-50 to-white p-4">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
-              <label class="block">
-                <span class="text-xs font-semibold text-gray-600">整体材质</span>
-                <select v-model="draftSetName"
-                        class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                        @change="applyMaterialSetByName">
-                  <option value="自定义">自定义</option>
-                  <option v-for="option in materialSetOptions" :key="option.key" :value="option.title">
-                    {{ option.shortTitle }}
-                  </option>
-                </select>
-              </label>
+        <div class="px-5 py-4 space-y-5 max-h-[72vh] overflow-y-auto">
+          <section>
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <h4 class="text-sm font-semibold text-gray-700">效果图识别结果</h4>
+              <span class="text-xs text-gray-400">共 {{ materialSetOptions.length }} 条</span>
+            </div>
+            <div v-if="materialSetOptions.length <= 2 && materialSetOptions.length" class="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+              <button v-for="option in materialSetOptions" :key="option.key" type="button"
+                      class="w-full px-4 py-3 text-left hover:bg-blue-50/50 transition-colors"
+                      :class="draftSetName === option.key ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : 'bg-white'"
+                      @click="selectMaterialSet(option)">
+                <div class="flex items-start gap-3">
+                  <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
+                        :class="draftSetName === option.key ? 'border-blue-500' : 'border-gray-300'">
+                    <span v-if="draftSetName === option.key" class="h-2 w-2 rounded-full bg-blue-500"></span>
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
+                      <span class="text-sm font-medium text-gray-800">{{ option.source }}</span>
+                      <span v-if="option.preferred" class="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full self-start">当前空间相关</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">{{ option.relationship }}</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5 mt-2 text-xs">
+                      <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded">墙面：{{ option.material.wall || '—' }}</span>
+                      <span class="px-2 py-1 bg-green-50 text-green-700 rounded">地面：{{ option.material.floor || '—' }}</span>
+                      <span class="px-2 py-1 bg-purple-50 text-purple-700 rounded">顶面：{{ option.material.ceiling || '—' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+            <div v-else-if="materialSetOptions.length > 2" class="max-h-[250px] overflow-y-auto pr-1 space-y-2">
+              <div class="space-y-2">
+                <button v-for="option in materialSetOptions" :key="option.key" type="button"
+                        class="w-full rounded-xl border p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
+                        :class="draftSetName === option.key ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-200' : 'border-gray-200 bg-white'"
+                        @click="selectMaterialSet(option)">
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="text-sm font-medium text-gray-800 leading-5">{{ option.source }}</span>
+                    <span v-if="option.preferred" class="shrink-0 text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">当前空间相关</span>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1.5 min-h-[2.5rem]">{{ option.relationship }}</p>
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5 mt-2 text-xs">
+                    <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded">墙面：{{ option.material.wall || '—' }}</span>
+                    <span class="px-2 py-1 bg-green-50 text-green-700 rounded">地面：{{ option.material.floor || '—' }}</span>
+                    <span class="px-2 py-1 bg-purple-50 text-purple-700 rounded">顶面：{{ option.material.ceiling || '—' }}</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+            <div v-else class="border border-dashed border-gray-200 rounded-lg py-5 text-center text-xs text-gray-400">本批次没有可用的材质识别结果</div>
+          </section>
 
+          <section class="border-t border-gray-100 pt-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <h4 class="text-sm font-semibold text-gray-700">人工修改</h4>
+              <button v-if="draftSetName !== '自定义'" type="button" class="text-xs text-blue-600 hover:underline" @click="enableCustomSet">单独调整材质</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
               <label v-for="surface in surfaces" :key="surface.key" class="block">
-                <span class="text-xs font-semibold text-gray-600">{{ surface.label }}</span>
+                <span class="text-xs font-medium text-gray-600">{{ surface.label }}</span>
                 <input v-model="draftMaterial[surface.key]"
-                       :list="`fusion-${surface.key}-options`"
-                       class="mt-1 w-full border rounded-xl px-3 py-2 text-sm shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                       :class="isCustomSet ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'"
+                       class="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                       :class="isCustomSet ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-50 text-gray-500'"
                        :disabled="!isCustomSet"
                        :placeholder="surface.placeholder" />
-                <datalist :id="`fusion-${surface.key}-options`">
-                  <option v-for="option in materialOptions(surface.key)" :key="option.key" :value="option.value" />
-                </datalist>
               </label>
             </div>
-            <div class="mt-2 text-xs text-gray-400">
-              选择“自定义”后可修改墙、地、顶；选择识别出的整体材质会锁定三项并一次性带入。
-            </div>
-          </div>
+          </section>
         </div>
 
         <div class="flex items-center justify-between gap-3 px-5 py-4 border-t border-gray-100">
@@ -179,7 +242,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, inject, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import API from '../services/api.js'
 import QuoteDisplay from './QuoteDisplay.vue'
 
@@ -220,6 +283,25 @@ const candidatesBySpace = computed(() => {
   return result
 })
 
+const imageSequenceByKey = computed(() => {
+  const result = new Map()
+  imageResults.value.forEach((image, index) => {
+    result.set(getImageKey(image), index + 1)
+  })
+  return result
+})
+
+const imagesByRecognizedSpace = computed(() => {
+  const result = new Map()
+  for (const image of imageResults.value) {
+    const spaceName = getImageSpace(image)
+    const images = result.get(spaceName) || []
+    images.push(image)
+    result.set(spaceName, images)
+  }
+  return result
+})
+
 const cadMatchesByImage = computed(() => {
   const result = new Map()
   for (const image of imageResults.value) {
@@ -249,9 +331,6 @@ const fusionRows = computed(() => cadSpaces.value.map((space, idx) => {
     material: hasManual ? manual : (auto?.material || {}),
     image: auto?.image || null,
     candidates,
-    candidateReason: candidates.length > 1
-      ? `${candidates.length} 个可能来源`
-      : (uniqueCandidate && reverseMatches.length > 1 ? `同一效果图命中 ${reverseMatches.length} 个 CAD 空间` : '当前批次无对应效果图'),
   }
 }))
 
@@ -271,38 +350,24 @@ const materialSetOptions = computed(() => {
   for (const image of images) {
     const material = normalizeMaterial(image.material_info || image)
     if (!hasAnyMaterial(material)) continue
-    const key = `${material.wall}|${material.floor}|${material.ceiling}`
+    const key = `${getImageKey(image)}|${material.wall}|${material.floor}|${material.ceiling}`
     if (seen.has(key)) continue
     seen.add(key)
+    const source = sourceLabel(image)
+    const relationship = imageRelationshipText(image)
+    const preferred = editingRow.value?.candidates?.some(candidate => getImageKey(candidate.image) === getImageKey(image)) || false
     options.push({
       key,
-      title: `墙:${material.wall || '默认'} 地:${material.floor || '默认'} 顶:${material.ceiling || '默认'}`,
-      shortTitle: `${material.wall || '默认'} / ${material.floor || '默认'} / ${material.ceiling || '默认'}`,
+      source,
+      relationship,
       material,
+      preferred,
     })
   }
   return options
 })
 
 const isCustomSet = computed(() => draftSetName.value === '自定义')
-
-const MaterialPill = defineComponent({
-  props: {
-    label: { type: String, required: true },
-    value: { type: String, default: '默认' },
-    tone: { type: String, default: 'wall' },
-  },
-  setup(props) {
-    return () => h('span', {
-      class: [
-        'inline-flex items-center gap-1.5 min-w-0 text-xs leading-none',
-      ].join(' '),
-    }, [
-      h('span', { class: ['shrink-0 rounded px-1.5 py-1', materialPillClass(props.tone)].join(' ') }, props.label),
-      h('span', { class: 'font-medium text-gray-700 truncate' }, props.value || '默认'),
-    ])
-  },
-})
 
 onMounted(loadCurrentBatch)
 
@@ -340,7 +405,7 @@ function openEditor(row) {
   const current = normalizeMaterial(row.material || manualMaterials.value[row.space_name] || {})
   if (!hasAnyMaterial(current) && row.candidates?.length) {
     draftMaterial.value = defaultMaterialFromCandidates(row.candidates)
-    draftSetName.value = materialSetNameForMaterial(draftMaterial.value) || materialSetOptions.value[0]?.title || '自定义'
+    draftSetName.value = materialSetNameForMaterial(draftMaterial.value) || '自定义'
     return
   }
   draftMaterial.value = current
@@ -366,10 +431,13 @@ function applyMaterialSet(material) {
   draftMaterial.value = normalizeMaterial(material)
 }
 
-function applyMaterialSetByName() {
-  if (draftSetName.value === '自定义') return
-  const option = materialSetOptions.value.find(item => item.title === draftSetName.value)
-  if (option) applyMaterialSet(option.material)
+function selectMaterialSet(option) {
+  draftSetName.value = option.key
+  applyMaterialSet(option.material)
+}
+
+function enableCustomSet() {
+  draftSetName.value = '自定义'
 }
 
 function isSameMaterialSet(left, right) {
@@ -381,35 +449,7 @@ function isSameMaterialSet(left, right) {
 function materialSetNameForMaterial(material) {
   const normalized = normalizeMaterial(material)
   const option = materialSetOptions.value.find(item => isSameMaterialSet(item.material, normalized))
-  return option?.title || ''
-}
-
-function materialOptions(surfaceKey) {
-  const seen = new Set()
-  const options = []
-  const preferredImages = editingRow.value?.candidates?.map(candidate => candidate.image) || []
-  for (const image of preferredImages) {
-    appendMaterialOption(options, seen, surfaceKey, image, true)
-  }
-  for (const image of imageResults.value) {
-    appendMaterialOption(options, seen, surfaceKey, image, false)
-  }
-  return options
-}
-
-function appendMaterialOption(options, seen, surfaceKey, image, preferred) {
-  const material = normalizeMaterial(image.material_info || image)
-  const value = material[surfaceKey]
-  if (!value) return
-  const optionKey = `${surfaceKey}:${value}`
-  if (seen.has(optionKey)) return
-  seen.add(optionKey)
-  options.push({
-    key: optionKey,
-    value,
-    imageId: getImageKey(image),
-    preferred,
-  })
+  return option?.key || ''
 }
 
 function defaultMaterialFromCandidates(candidates) {
@@ -443,7 +483,7 @@ async function generateQuote() {
 
 function normalizeImageMaterial(image) {
   const material = normalizeMaterial(image.material_info || image)
-  return { image, material }
+  return { image, material, optionKey: `${getImageKey(image)}:${material.wall}|${material.floor}|${material.ceiling}` }
 }
 
 function normalizeMaterial(material) {
@@ -456,10 +496,6 @@ function normalizeMaterial(material) {
 
 function hasAnyMaterial(material) {
   return !!(material?.wall || material?.floor || material?.ceiling)
-}
-
-function hasMaterialResult(row) {
-  return row.status === 'manual' || row.status === 'auto'
 }
 
 function namesMatch(cadName = '', imageName = '') {
@@ -481,16 +517,27 @@ function namesMatch(cadName = '', imageName = '') {
   return groups.some(group => group.some(name => left.includes(name)) && group.some(name => right.includes(name)))
 }
 
-function materialSummary(image) {
-  return materialText(normalizeMaterial(image.material_info || image))
+function getImageSpace(image) {
+  return image?.space_name || image?.recognized_space || '未识别空间'
 }
 
-function materialText(material) {
-  return [
-    material.wall ? `墙面：${material.wall}` : '',
-    material.floor ? `地面：${material.floor}` : '',
-    material.ceiling ? `顶面：${material.ceiling}` : '',
-  ].filter(Boolean).join('；')
+function getImageFilename(image) {
+  return image?.filename || image?.original_filename || (getImageKey(image) ? `图片#${getImageKey(image)}` : '未知图片')
+}
+
+function sourceLabel(image) {
+  return `${getImageSpace(image)} · 图${imageSequenceByKey.value.get(getImageKey(image)) || '?'} · ${getImageFilename(image)}`
+}
+
+function imageRelationshipText(image) {
+  const spaceName = getImageSpace(image)
+  const sameSpaceImages = imagesByRecognizedSpace.value.get(spaceName) || []
+  const matchedSpaces = cadMatchesByImage.value.get(getImageKey(image)) || []
+  const parts = []
+  if (sameSpaceImages.length > 1) parts.push(`该空间有 ${sameSpaceImages.length} 张效果图`)
+  if (matchedSpaces.length > 1) parts.push(`该图对应 ${matchedSpaces.length} 个 CAD 空间：${matchedSpaces.map(space => space.space_name || space.name).join('、')}`)
+  if (matchedSpaces.length === 1) parts.push(`对应 CAD 空间：${matchedSpaces[0].space_name || matchedSpaces[0].name}`)
+  return parts.join('；') || '当前图仅对应一个识别空间'
 }
 
 function getImageKey(image) {
@@ -515,22 +562,9 @@ function statusClass(status) {
   }[status] || 'bg-gray-50 text-gray-600'
 }
 
-function materialPillClass(tone) {
-  return {
-    wall: 'border-sky-100 bg-sky-50 text-sky-800',
-    floor: 'border-amber-100 bg-amber-50 text-amber-800',
-    ceiling: 'border-violet-100 bg-violet-50 text-violet-800',
-  }[tone] || 'border-gray-100 bg-gray-50 text-gray-700'
-}
-
 function formatNum(value) {
   const num = Number(value || 0)
   return Number.isFinite(num) ? num.toFixed(2) : '0.00'
-}
-
-function formatConfidence(value) {
-  const num = Number(value || 0)
-  return num ? `${Math.round(num * 100)}%` : '—'
 }
 
 function handleExport() {}
