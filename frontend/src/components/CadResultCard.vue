@@ -20,7 +20,7 @@
 
     <!-- 汇总卡片 -->
     <template v-else>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
         <div class="bg-blue-50 rounded-xl p-3 text-center">
           <p class="text-xl font-bold text-blue-700">{{ data.data.space_count || data.data.spaces?.length || 0 }}</p>
           <p class="text-xs text-blue-600 mt-0.5">识别空间 (个)</p>
@@ -29,13 +29,9 @@
           <p class="text-xl font-bold text-green-700">{{ formatNum(data.data.total_area) }}</p>
           <p class="text-xs text-green-600 mt-0.5">总面积 (㎡)</p>
         </div>
-        <div class="bg-orange-50 rounded-xl p-3 text-center">
-          <p class="text-xl font-bold text-orange-700">¥{{ formatPrice(data.data.base_price) }}</p>
-          <p class="text-xs text-orange-600 mt-0.5">基础价</p>
-        </div>
-        <div class="bg-purple-50 rounded-xl p-3 text-center">
-          <p class="text-xl font-bold text-purple-700">¥{{ formatPrice(data.data.final_price) }}</p>
-          <p class="text-xs text-purple-600 mt-0.5">最终报价</p>
+        <div class="bg-cyan-50 rounded-xl p-3 text-center">
+          <p class="text-xl font-bold text-cyan-700">{{ formatNum(totalPerimeter) }}</p>
+          <p class="text-xs text-cyan-600 mt-0.5">总周长 (m)</p>
         </div>
       </div>
 
@@ -91,6 +87,10 @@ const props = defineProps({ data: Object })
 
 const unnamedCount = computed(() =>
   props.data?.data?.spaces?.filter(s => !s.name || s.name === '未命名空间').length || 0
+)
+
+const totalPerimeter = computed(() =>
+  props.data?.data?.spaces?.reduce((sum, s) => sum + (s.perimeter_m || 0), 0) || 0
 )
 
 function formatNum(v) { return v ? Number(v).toFixed(2) : '-' }
