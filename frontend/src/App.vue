@@ -148,6 +148,7 @@
               ref="imageQueueRef"
               :drawing-id="activeDrawingId || cadResult?.data?.drawing_id || 0"
               :model="selectedModel"
+              v-model:full-enabled="fullEnabled"
               @results-update="onQueueResults"
               @pending-update="onQueuePendingUpdate"
               @progress-update="onQueueProgressUpdate"
@@ -398,6 +399,7 @@ const imageQueueRef = ref(null)
 const queuePendingCount = ref(0)
 const queueProgress = ref({ running: false, finished: 0, total: 0, currentName: '', error: '' })
 const progressSteps = ref([])
+const fullEnabled = ref(false)  // 是否识别空间类型
 
 const imageQueueBindingTip = computed(() => {
   const drawingId = activeDrawingId.value || cadResult.value?.data?.drawing_id || 0
@@ -816,6 +818,7 @@ async function startAnalysis() {
     imageResult.value = await API.analyzeImage(imageFile.value, {
       model: selectedModel.value,
       cropEnabled: true,
+      fullEnabled: fullEnabled.value,
       // 优先使用融合报价当前选中的图纸，其次使用本页刚解析出的 CAD 图纸；
       // 两者都没有时传 0，保持独立效果图识别进入历史库的旧行为。
       drawingId: activeDrawingId.value || cadResult.value?.data?.drawing_id || 0,

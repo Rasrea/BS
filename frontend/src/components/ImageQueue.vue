@@ -72,6 +72,23 @@
       </div>
     </div>
 
+    <!-- 空间识别开关 -->
+    <div class="flex items-center gap-3 mb-3 px-1">
+      <label class="flex items-center gap-2 cursor-pointer select-none">
+        <span class="text-xs text-gray-500">🏷️ 识别空间类型：</span>
+        <div class="relative inline-flex items-center">
+          <input type="checkbox" :checked="fullEnabled" @change="$emit('update:fullEnabled', $event.target.checked)"
+                 class="sr-only peer" />
+          <div class="w-8 h-4 bg-gray-200 peer-checked:bg-primary-500 rounded-full transition-colors"></div>
+          <div class="absolute left-0.5 top-0.5 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-4"></div>
+        </div>
+        <span class="text-xs" :class="fullEnabled ? 'text-primary-600 font-medium' : 'text-gray-400'">
+          {{ fullEnabled ? '启用' : '关闭' }}
+        </span>
+      </label>
+      <p v-if="fullEnabled" class="text-[10px] text-gray-400">模型将尝试识别房间用途（客厅/卧室等），耗时略增</p>
+    </div>
+
   </div>
 
   <div v-if="lightbox.show"
@@ -95,6 +112,7 @@ const props = defineProps({
   // 当前 CAD 图纸 ID。为 0 时保持旧行为：效果图只进入历史库，不归属到当前图纸。
   drawingId: { type: Number, default: 0 },
   model: { type: String, default: '' },
+  fullEnabled: { type: Boolean, default: false },
 })
 
 const dragging = ref(false)
@@ -240,6 +258,7 @@ async function startQueue(drawingIdOverride = null) {
         // 多张队列与单张上传使用同一归属规则：有 CAD 图纸 ID 才绑定到当前图纸。
         drawingId: effectiveDrawingId,
         model: props.model,
+        fullEnabled: props.fullEnabled,
         fileCount: files.length, // 该批次效果图数量
         batchId: batchId,  // 传递批次ID
       })
