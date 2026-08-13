@@ -915,9 +915,18 @@ async def analyze_full(
         await db.update_drawing_parse(drawing_id, "completed", {"spaces_count": len(spaces), "total_area": total_area})
 
         # 写入持久类 CadSpace中（只保存最新一次识别结果）
-        from models.analysis_models import set_latest_cad_spaces, dict_to_cadspace
+        from models.analysis_models import set_latest_cad_spaces, get_latest_cad_spaces, dict_to_cadspace, clear_image_results
+        previous_cad_spaces = get_latest_cad_spaces()
         cad_spaces = [dict_to_cadspace(s) for s in spaces]
+        previous_signature = tuple(
+            sorted((s.space_name, round(float(s.area_sqm or 0), 2)) for s in (previous_cad_spaces or []))
+        )
+        current_signature = tuple(
+            sorted((s.space_name, round(float(s.area_sqm or 0), 2)) for s in cad_spaces)
+        )
         set_latest_cad_spaces(cad_spaces)
+        if previous_signature and previous_signature != current_signature:
+            clear_image_results()
     
         result = {
             "drawing_id": drawing_id,
@@ -1101,7 +1110,7 @@ async def analyze_image(
     )
 
     # 写入持久类 ImageResult 
-    from models.analysis_models import ImageResult, append_image_result, clear_image_results
+    from models.analysis_models import ImageResult, append_image_result, clear_image_results, set_latest_image_result
     
     # 创建 ImageResult 对象并保存到内存
     image_result = ImageResult(
@@ -1116,10 +1125,16 @@ async def analyze_image(
     # 按 batch_id 分组保存（批次追踪）
     batch_key = batch_id if batch_id else f"batch_{file_count}"
     
-    # 新批次开始时清空旧数据，只保留最新批次
+    # 新批次开始时把上一批当前效果图带入新批次，支持“先识别一批，再继续添加识别”。
+    # /api/analyze/latest 仍只读取 latest batch，但 latest batch 内包含当前 CAD 流程下累计识别图。
     from models.analysis_models import _latest_image_registry
     if not _latest_image_registry or batch_key not in _latest_image_registry:
+        previous_results = []
+        for batch_results in _latest_image_registry.values():
+            previous_results.extend(batch_results)
         clear_image_results()
+        if previous_results:
+            set_latest_image_result(batch_key, previous_results)
     append_image_result(batch_key, image_result)
     
     logger.info("📷 已保存 ImageResult: id=%s, batch_id=%s, file_count=%d", 
@@ -1169,6 +1184,357 @@ async def get_latest_analysis():
         "total_area": round(total_area, 2),
         "image_results": image_results,
     })
+
+
+@app.post("/api/analyze/latest/clear")
+async def clear_latest_analysis():
+    """清空当前批次识别内存，用于用户明确移除/更换 CAD 后开启新一轮分析。"""
+    from models.analysis_models import clear_latest_cad_spaces, clear_image_results
+
+    clear_latest_cad_spaces()
+    clear_image_results()
+    return ok({"cleared": True})
+
+
+def _normalize_latest_materials(payload):
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "wall": payload.get("wall") or payload.get("wall_material") or payload.get("墙面材质") or "",
+        "floor": payload.get("floor") or payload.get("floor_material") or payload.get("地面材质") or "",
+        "ceiling": payload.get("ceiling") or payload.get("ceiling_material") or payload.get("顶面材质") or "",
+        "style": payload.get("style") or payload.get("decor_style") or "",
+        "remark": payload.get("remark") or "",
+    }
+
+
+def _latest_cad_rows(cad_spaces):
+    rows = []
+    for idx, space in enumerate(cad_spaces or [], start=1):
+        data = space.to_dict() if hasattr(space, "to_dict") else dict(space)
+        rows.append({
+            "id": data.get("id") or idx,
+            "space_name": data.get("space_name") or data.get("name") or "",
+            "area": float(data.get("area") or data.get("area_sqm") or 0),
+            "length": float(data.get("length") or 0),
+            "width": float(data.get("width") or 0),
+        })
+    return rows
+
+
+def _latest_image_rows(image_results):
+    rows = []
+    for idx, image in enumerate(image_results or [], start=1):
+        data = image.to_dict() if hasattr(image, "to_dict") else dict(image)
+        material_info = _normalize_latest_materials(data.get("material_info") or data)
+        rows.append({
+            "id": data.get("image_result_id") or data.get("id") or idx,
+            "recognized_space": data.get("recognized_space") or data.get("space_name") or "",
+            "material_info": material_info,
+            "confidence": float(data.get("confidence") or 0),
+            "original_filename": data.get("original_filename") or data.get("filename") or f"效果图#{idx}",
+        })
+    return rows
+
+
+async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, persist=True):
+    total_area = sum(float(r.get("area", 0) or 0) for r in cad_rows)
+
+    settings = await db.get_settings()
+    unit_price = float(settings.get("base_unit_price", 9374))
+    manage_rate = float(settings.get("manage_fee_rate", 0.05))
+    tax_rate = float(settings.get("tax_rate", 0.03))
+    loss_rate = float(settings.get("loss_rate", 0.03))
+    base_price = total_area * unit_price
+
+    ai_material_index = {}
+    image_matches = []
+    for img in image_rows:
+        raw_space = str(img.get("recognized_space", "")).strip()
+        mat = img.get("material_info", {})
+        if isinstance(mat, str):
+            try:
+                mat = json.loads(mat)
+            except Exception:
+                mat = {}
+        mat = _normalize_latest_materials(mat)
+        candidates = []
+        if raw_space:
+            for cad in cad_rows:
+                cad_name = cad.get("space_name", "")
+                if cad_name and space_synonyms.match_space_name(cad_name, raw_space):
+                    candidates.append({
+                        "cad_id": cad.get("id"),
+                        "cad_name": cad_name,
+                        "area": cad.get("area", 0),
+                    })
+            if len(candidates) == 1:
+                cad_name = candidates[0]["cad_name"]
+                existing = ai_material_index.get(cad_name)
+                if not existing:
+                    ai_material_index[cad_name] = {
+                        "image_id": img.get("id"),
+                        "materials": mat,
+                        "confidence": img.get("confidence", 0),
+                        "recognized_space": raw_space,
+                        "filename": img.get("original_filename", ""),
+                    }
+                else:
+                    ai_material_index[cad_name] = {
+                        "ambiguous": True,
+                        "image_id": None,
+                        "materials": {},
+                        "confidence": 0,
+                    }
+        image_matches.append({
+            "image_id": img.get("id"),
+            "recognized_space": raw_space or "未识别空间",
+            "filename": img.get("original_filename", ""),
+            "material_info": mat,
+            "confidence": img.get("confidence", 0),
+            "candidates": candidates,
+            "status": "auto" if len(candidates) == 1 else ("conflict" if len(candidates) > 1 else "unmatched"),
+        })
+
+    manual_index = {}
+    for binding in bindings or []:
+        if not isinstance(binding, dict):
+            continue
+        cad_name = binding.get("cad_name") or binding.get("space_name") or binding.get("cad_space_name") or ""
+        material_info = binding.get("material_info") or binding.get("materials") or {}
+        if not material_info and binding.get("material"):
+            material_info = {"wall": binding.get("material"), "floor": binding.get("material"), "ceiling": ""}
+        material_info = _normalize_latest_materials(material_info)
+        if cad_name:
+            manual_index[cad_name] = material_info
+
+    space_material_map = {}
+    fusion_matches = []
+    for row in cad_rows:
+        cad_name = row.get("space_name", "")
+        if not cad_name:
+            continue
+        if cad_name in manual_index:
+            match_data = {
+                "materials": manual_index[cad_name],
+                "source": "manual",
+                "image_id": None,
+                "confidence": 1.0,
+            }
+        elif cad_name in ai_material_index and not ai_material_index[cad_name].get("ambiguous"):
+            matched = ai_material_index[cad_name]
+            match_data = {
+                "materials": matched["materials"],
+                "source": "ai",
+                "image_id": matched["image_id"],
+                "confidence": matched["confidence"],
+            }
+        else:
+            match_data = {
+                "materials": {},
+                "source": "",
+                "image_id": None,
+                "confidence": 0,
+            }
+        space_material_map[cad_name] = match_data
+        fusion_matches.append({
+            "space_name": cad_name,
+            "area": row.get("area", 0),
+            "status": match_data["source"] or "unmatched",
+            "source": match_data["source"],
+            "image_id": match_data["image_id"],
+            "confidence": match_data["confidence"],
+            "material_info": match_data["materials"],
+        })
+
+    material_diff = 0
+    pricing_items = await db.get_pricing_items()
+    price_index = {}
+    material_keywords = ["乳胶漆", "瓷砖", "墙纸", "墙布", "木饰面", "地砖", "地板",
+                         "实木地板", "复合地板", "大理石", "石膏板", "铝扣板"]
+    for pi in sorted(pricing_items, key=lambda x: x.get("id", 0)):
+        surface_type = pi.get("surface_type", "")
+        name = pi.get("item_name", "")
+        if surface_type not in ("wall", "floor", "ceiling"):
+            continue
+        for keyword in material_keywords:
+            if keyword in name and (surface_type, keyword) not in price_index:
+                price_index[(surface_type, keyword)] = {
+                    "material": pi.get("unit_price_material", 0) or 0,
+                    "labor": pi.get("unit_price_labor", 0) or 0,
+                }
+
+    def _auto_match_price(category, material_name):
+        surface_map = {"墙面工程": "wall", "地面工程": "floor", "吊顶工程": "ceiling"}
+        surface_type = surface_map.get(category, "")
+        if not surface_type or not material_name:
+            return None
+        for keyword in material_keywords:
+            if keyword in material_name:
+                match = price_index.get((surface_type, keyword))
+                if match:
+                    return match
+        return None
+
+    for row in cad_rows:
+        cad_name = row.get("space_name", "")
+        space_area = float(row.get("area", 0) or 0)
+        material = space_material_map.get(cad_name, {}).get("materials", {})
+        wall_mat = str(material.get("wall") or material.get("墙面材质") or "")
+        floor_mat = str(material.get("floor") or material.get("地面材质") or "")
+        ceiling_mat = str(material.get("ceiling") or material.get("顶面材质") or "")
+        for keyword, price in {"瓷砖": 45, "大理石": 90, "墙布": 30, "墙纸": 30, "壁纸": 30, "木饰面": 90, "岩板": 120, "护墙板": 90}.items():
+            if keyword in wall_mat:
+                material_diff += space_area * 0.6 * (price - 18)
+                break
+        for keyword, price in {"实木地板": 120, "复合地板": 60, "地板": 60, "大理石": 260, "地毯": 80, "岩板": 200}.items():
+            if keyword in floor_mat:
+                material_diff += space_area * 0.3 * (price - 45)
+                break
+        for keyword, price in {"铝扣板": 50, "蜂窝大板": 100, "集成吊顶": 50, "木饰面": 100, "造型吊顶": 80, "格栅吊顶": 80}.items():
+            if keyword in ceiling_mat:
+                diff = price - 60
+                if diff > 0:
+                    material_diff += space_area * diff
+
+    loss_price = base_price * loss_rate
+    process_add_price = total_area * 5
+    manage_fee = base_price * manage_rate
+    tax_fee = (base_price + material_diff + loss_price + manage_fee) * tax_rate
+    final_price = base_price + material_diff + process_add_price + loss_price + manage_fee + tax_fee
+
+    category_process_map = {
+        "墙面工程": "油漆工程",
+        "地面工程": "瓦工工程",
+    }
+    sys_procs = await db.get_processes()
+    proc_name_to_id = {p["name"]: p["id"] for p in sys_procs}
+    items = []
+    for row in cad_rows:
+        cad_name = row.get("space_name", "")
+        space_area = float(row.get("area", 0) or 0)
+        wall_area = space_area * 2.5
+        match_data = space_material_map.get(cad_name, {})
+        material = match_data.get("materials", {})
+        source = match_data.get("source", "")
+        source_label = {"ai": "AI材质", "manual": "人工标注"}.get(source, "默认计价")
+        source_note = {"ai": "自动匹配当前批次效果图", "manual": "使用人工标注材质"}.get(source, "未匹配当前批次效果图材质，使用默认材质")
+        wall_mat_name = str(material.get("wall") or material.get("墙面材质") or "乳胶漆")
+        floor_mat_name = str(material.get("floor") or material.get("地面材质") or "地砖")
+        for category, material_name, quantity, default_material, default_labor, suffix in [
+            ("墙面工程", wall_mat_name, wall_area, 18, 22, "墙面"),
+            ("地面工程", floor_mat_name, space_area, 45, 35, "铺贴"),
+        ]:
+            price_match = _auto_match_price(category, material_name)
+            material_price = price_match["material"] if price_match else default_material
+            labor_price = price_match["labor"] if price_match else default_labor
+            process_name = category_process_map.get(category, "")
+            items.append({
+                "space_name": cad_name,
+                "category": category,
+                "project_name": f"{material_name}{suffix}",
+                "quantity": round(quantity, 2),
+                "unit": "㎡",
+                "material_unit_price": material_price,
+                "labor_unit_price": labor_price,
+                "subtotal": round(quantity * (material_price + labor_price), 2),
+                "source": "当前批次融合" if source else "CAD工程量",
+                "material_name": material_name,
+                "material_source": source,
+                "material_source_label": source_label,
+                "material_source_note": source_note,
+                "process_name": process_name,
+                "process_id": proc_name_to_id.get(process_name, 0),
+                "price_matched": bool(price_match),
+                "price_source": "pricing_items" if price_match else "fallback",
+                "price_warning": "" if price_match else f"未匹配到{category[:2]}材质价格，已使用默认单价，请人工确认",
+            })
+
+    items = sorted(items, key=lambda x: (
+        x.get("space_name", ""),
+        {"墙面工程": 0, "地面工程": 1}.get(x.get("category", ""), 9),
+    ))
+
+    trace = {
+        "source": "analyze_latest",
+        "cad_space_count": len(cad_rows),
+        "image_result_count": len(image_rows),
+        "bindings": bindings or [],
+        "settings": settings,
+        "fusion_time": datetime.now().isoformat(),
+        **(trace_extra or {}),
+    }
+    image_ids = [r.get("id") for r in image_rows if r.get("id") is not None]
+    quote_id = 0
+    if persist:
+        quote_id = await db.add_quote(
+            0, image_ids,
+            round(base_price, 2), round(material_diff, 2),
+            round(process_add_price, 2), round(loss_price, 2),
+            round(manage_fee, 2), round(tax_fee, 2), round(final_price, 2),
+            items, trace, project_name="当前批次融合报价"
+        )
+    return {
+        "quote_id": quote_id,
+        "base_price": round(base_price, 2),
+        "material_diff_price": round(material_diff, 2),
+        "process_add_price": round(process_add_price, 2),
+        "loss_price": round(loss_price, 2),
+        "manage_fee": round(manage_fee, 2),
+        "tax_fee": round(tax_fee, 2),
+        "final_price": round(final_price, 2),
+        "items": items,
+        "space_count": len(cad_rows),
+        "total_area": round(total_area, 2),
+        "fusion_matches": fusion_matches,
+        "image_matches": image_matches,
+        "auto_matched_count": sum(1 for m in fusion_matches if m["source"] == "ai"),
+        "manual_matched_count": sum(1 for m in fusion_matches if m["source"] == "manual"),
+        "unmatched_count": sum(1 for m in fusion_matches if not m["source"]),
+    }
+
+
+@app.post("/api/fusion/quote_latest")
+async def quote_latest_fusion(manual_bindings: str = Form("[]")):
+    bindings = json.loads(manual_bindings) if isinstance(manual_bindings, str) else manual_bindings
+    tid = ""
+    acquired = False
+    try:
+        from models.analysis_models import get_latest_cad_spaces, _latest_image_registry
+
+        cad_spaces = get_latest_cad_spaces()
+        if not cad_spaces:
+            return err(422, "暂无当前批次 CAD 识别结果，请先点击开始分析")
+
+        latest_batch_id = list(_latest_image_registry.keys())[-1] if _latest_image_registry else ""
+        image_results = _latest_image_registry.get(latest_batch_id, []) if latest_batch_id else []
+
+        ok_flag, tid = await task_state.acquire("merge")
+        if not ok_flag:
+            return err(409, f"系统当前有任务正在执行（{task_state.state}），请等待完成后再操作")
+        acquired = True
+
+        quote = await _build_fusion_quote(
+            _latest_cad_rows(cad_spaces),
+            _latest_image_rows(image_results),
+            bindings,
+            trace_extra={"latest_batch_id": latest_batch_id},
+            persist=True,
+        )
+
+        await db.add_log(
+            task_type="merge",
+            operation_action=f"当前批次融合报价: quote_id={quote['quote_id']}, {quote['space_count']}个空间, 总计¥{quote['final_price']:.0f}",
+            lock_status="idle",
+            trace_id=tid,
+            run_status="success",
+        )
+        return ok(quote, task_status=STATE_IDLE, trace_id=tid)
+    except Exception as e:
+        return err(500, f"当前批次融合失败: {str(e)}", task_status=STATE_IDLE, trace_id=tid)
+    finally:
+        if acquired:
+            await task_state.release()
 
 @app.post("/api/vision_test")
 async def vision_test(

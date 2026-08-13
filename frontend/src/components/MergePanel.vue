@@ -1,465 +1,571 @@
 <template>
-  <div>
-    <!-- 步骤1：选择CAD结果 -->
-    <div class="card mb-4">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">① 选择CAD解析结果</h3>
-      <select v-model="selectedCadId" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-        <option value="">-- 请选择CAD结果 --</option>
-        <option v-for="r in cadResults" :key="r.id" :value="r.id">
-          {{ r.drawing_name || ('图纸#' + r.id) }} — {{ r.space_count || 0 }}个空间
-        </option>
-      </select>
-    </div>
+  <div class="space-y-4">
+    <div class="card">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="text-base font-semibold text-gray-800">融合报价</h3>
+          <p class="text-xs text-gray-500 mt-1">
+            读取当前批次 CAD 与效果图识别结果；列表只展示融合结果，点“编辑”可按墙/地/顶分别选择或手填材质。
+          </p>
+        </div>
+        <button class="btn-secondary text-sm" :disabled="loading" @click="loadCurrentBatch">
+          {{ loading ? '刷新中...' : '刷新当前批次' }}
+        </button>
+      </div>
 
-    <!-- 步骤2：选择图片识别结果 -->
-    <div class="card mb-4">
-      <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-semibold text-gray-700">② 选择效果图识别结果（可多选）</h3>
-        <!--
-          默认使用“本次上传”：只展示本页面会话中新上传成功的效果图，避免同一图纸下混入旧记录。
-          “全部历史”是显式复用入口，适合用户确认要跨项目复用历史识别结果的场景。
-        -->
-        <div class="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
-          <button type="button"
-                  class="px-3 py-1.5"
-                  :class="imageResultScope === 'session' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
-                  @click="imageResultScope = 'session'">
-            本次上传
-          </button>
-          <button type="button"
-                  class="px-3 py-1.5 border-l border-gray-200"
-                  :class="imageResultScope === 'all' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'"
-                  @click="imageResultScope = 'all'">
-            全部历史
-          </button>
+      <div v-if="loadError" class="mt-4 p-3 rounded-xl text-sm bg-yellow-50 text-yellow-700 border border-yellow-100">
+        {{ loadError }}
+      </div>
+
+      <div v-if="currentBatch" class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+        <div class="rounded-xl border border-blue-100 bg-blue-50 p-3">
+          <div class="text-xs text-blue-500">CAD 空间</div>
+          <div class="text-xl font-semibold text-blue-700">{{ currentBatch.space_count || 0 }}</div>
+        </div>
+        <div class="rounded-xl border border-green-100 bg-green-50 p-3">
+          <div class="text-xs text-green-500">效果图</div>
+          <div class="text-xl font-semibold text-green-700">{{ imageResults.length }}</div>
+        </div>
+        <div class="rounded-xl border border-purple-100 bg-purple-50 p-3">
+          <div class="text-xs text-purple-500">总面积</div>
+          <div class="text-xl font-semibold text-purple-700">{{ formatNum(currentBatch.total_area) }}㎡</div>
         </div>
       </div>
-      <!-- 历史库模式风险更高：同名房间可能来自不同项目，所以必须给用户明确提示。 -->
-      <div v-if="imageResultScope === 'all'" class="text-xs text-yellow-700 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-2 mb-3">
-        当前显示全部历史识别结果，请根据 ID、房间、材质和时间确认后再选择，避免跨项目材质误用。
+    </div>
+
+    <div v-if="currentBatch" class="card">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+        <h3 class="text-sm font-semibold text-gray-800">融合匹配看板</h3>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100">自动 {{ autoRows.length }}</span>
+          <span class="px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-100">候选 {{ candidateRows.length }}</span>
+          <span class="px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">已编辑 {{ manualMatchedCount }}</span>
+          <span class="px-2 py-1 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-100">待处理 {{ unresolvedCount }}</span>
+        </div>
       </div>
-      <div v-if="imageResults.length === 0" class="text-sm text-gray-400 py-4 text-center">
-        {{ imageResultEmptyText }}
+
+      <div v-if="cadSpaces.length === 0" class="text-sm text-gray-400 py-6 text-center">
+        当前批次暂无 CAD 空间，请先在图纸分析页点击开始分析。
       </div>
-      <div v-else class="space-y-2 max-h-48 overflow-y-auto">
-        <label v-for="r in imageResults" :key="r.id"
-               class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer border border-gray-100">
-          <input type="checkbox" :value="r.id" v-model="selectedImageIds" class="rounded text-primary-600" />
-          <div class="flex-1 text-sm min-w-0">
-            <!-- ID + 房间 + 文件/时间 + 材质摘要共同展示，解决多个“客厅/卧室”无法区分的问题。 -->
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-gray-800">#{{ r.id }} {{ r.recognized_space || '未识别空间' }}</span>
-              <span class="text-gray-400 truncate">{{ r.original_filename || ('图片#' + r.id) }}</span>
-              <span v-if="r.create_time" class="text-gray-400">{{ formatDateTime(r.create_time) }}</span>
+
+      <div v-else class="space-y-5">
+        <section v-if="autoRows.length" class="rounded-xl border border-green-100 overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-2.5 bg-green-50 border-b border-green-100">
+            <div>
+              <h4 class="text-sm font-semibold text-green-800">自动识别完成</h4>
             </div>
-            <div class="text-xs text-gray-500 truncate" :title="materialSummary(r)">
-              {{ materialSummary(r) || '未识别到具体材质' }}
-            </div>
+            <span class="text-xs text-green-700">{{ autoRows.length }} 个空间</span>
           </div>
-        </label>
+          <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">空间名称</th>
+              <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">面积(㎡)</th>
+              <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">匹配状态</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-blue-700 bg-blue-50">墙面材质</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-green-700 bg-green-50">地面材质</th>
+              <th class="px-3 py-2.5 text-left text-xs font-semibold text-purple-700 bg-purple-50">顶面材质</th>
+              <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 bg-white">
+            <tr v-for="row in autoRows" :key="row.key"
+                class="hover:bg-gray-50/60 transition-colors"
+                :class="{ 'bg-yellow-50/30': row.status === 'candidate' || row.status === 'unmatched' }">
+              <td class="px-4 py-2.5 font-medium text-gray-800 whitespace-nowrap">{{ row.space_name }}</td>
+              <td class="px-4 py-2.5 text-right text-gray-600 whitespace-nowrap">{{ formatNum(row.area) }}</td>
+              <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium" :class="statusClass(row.status)">
+                  {{ shortStatusText(row.status) }}
+                </span>
+              </td>
+              <td class="px-3 py-2.5 text-xs text-blue-700 bg-blue-50/50 max-w-[180px] truncate" :title="row.material.wall || ''">
+                {{ row.material.wall || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-xs text-green-700 bg-green-50/50 max-w-[180px] truncate" :title="row.material.floor || ''">
+                {{ row.material.floor || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-xs text-purple-700 bg-purple-50/50 max-w-[180px] truncate" :title="row.material.ceiling || ''">
+                {{ row.material.ceiling || '—' }}
+              </td>
+              <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                <button type="button" class="text-xs text-blue-600 hover:text-blue-800 hover:underline" @click="openEditor(row)">
+                  修改识别
+                </button>
+              </td>
+            </tr>
+          </tbody>
+          </table>
+        </section>
+
+        <section v-if="manualNeededRows.length" class="rounded-xl border border-orange-100 overflow-hidden">
+          <div class="flex items-center justify-between px-4 py-2.5 bg-orange-50 border-b border-orange-100">
+            <div>
+              <h4 class="text-sm font-semibold text-orange-800">待人工匹配</h4>
+            </div>
+            <span class="text-xs text-orange-700">{{ manualNeededRows.length }} 个空间</span>
+          </div>
+          <table class="min-w-full divide-y divide-gray-200 text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">空间名称</th>
+                <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">面积(㎡)</th>
+                <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">匹配状态</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-blue-700 bg-blue-50">墙面材质</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-green-700 bg-green-50">地面材质</th>
+                <th class="px-3 py-2.5 text-left text-xs font-semibold text-purple-700 bg-purple-50">顶面材质</th>
+                <th class="px-3 py-2.5 text-center text-xs font-semibold text-gray-600">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100 bg-white">
+              <tr v-for="row in manualNeededRows" :key="row.key"
+                  class="hover:bg-orange-50/40 transition-colors">
+                <td class="px-4 py-2.5 font-medium text-gray-800 whitespace-nowrap">{{ row.space_name }}</td>
+                <td class="px-4 py-2.5 text-right text-gray-600 whitespace-nowrap">{{ formatNum(row.area) }}</td>
+                <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium" :class="statusClass(row.status)">{{ shortStatusText(row.status) }}</span>
+                </td>
+                <td class="px-3 py-2.5 text-xs text-blue-700 bg-blue-50/50 max-w-[180px] truncate">{{ row.material.wall || '—' }}</td>
+                <td class="px-3 py-2.5 text-xs text-green-700 bg-green-50/50 max-w-[180px] truncate">{{ row.material.floor || '—' }}</td>
+                <td class="px-3 py-2.5 text-xs text-purple-700 bg-purple-50/50 max-w-[180px] truncate">{{ row.material.ceiling || '—' }}</td>
+                <td class="px-3 py-2.5 text-center whitespace-nowrap">
+                  <button type="button" class="text-xs text-blue-600 hover:text-blue-800 hover:underline" @click="openEditor(row)">修改识别</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <div class="flex items-center gap-3 mt-4">
+        <button class="btn-primary" :disabled="quoting || cadSpaces.length === 0" @click="generateQuote">
+          {{ quoting ? '生成中...' : '生成融合报价' }}
+        </button>
+        <span v-if="quoteError" class="text-xs text-red-600">{{ quoteError }}</span>
+        <span v-else class="text-xs text-gray-400">编辑后的墙/地/顶材质会作为人工融合结果传给后端。</span>
       </div>
     </div>
 
-    <!-- 步骤2.5：自动匹配建议 -->
-    <div class="card mb-4" v-if="showSuggestions && suggestionMatches.length > 0">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">③ 自动匹配建议 <span class="text-xs font-normal text-gray-400 ml-1">— 同义词引擎自动匹配CAD空间</span></h3>
-      <div class="text-xs text-gray-500 mb-3">系统已为每个AI识别空间自动推荐匹配的CAD空间。点击「确认绑定」将材质写入CAD空间。</div>
-      <div class="space-y-3">
-        <div v-for="m in suggestionMatches" :key="m.image_id"
-             class="border border-gray-200 rounded-lg p-3"
-             :class="getMatchCardClass(m)">
-          <!-- 头部：AI识别空间 -->
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2">
-              <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">AI</span>
-              <span class="font-medium text-gray-800">{{ m.recognized_space }}</span>
+    <div v-if="editingRow" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
+      <div class="w-full max-w-4xl rounded-xl bg-white shadow-xl border border-gray-100 overflow-hidden">
+        <div class="flex items-start justify-between gap-4 px-5 py-4 border-b border-gray-100">
+          <div>
+            <h3 class="text-base font-semibold text-gray-800">编辑空间材质：{{ editingRow.space_name }}</h3>
+            <p class="text-xs text-gray-400 mt-1">从本批次识别结果中选择，或在下方单独修改墙、地、顶材质。</p>
+          </div>
+          <button class="text-gray-400 hover:text-gray-600" @click="closeEditor">×</button>
+        </div>
+
+        <div class="px-5 py-4 space-y-5 max-h-[72vh] overflow-y-auto">
+          <section>
+            <div class="flex items-center justify-between gap-3 mb-2">
+              <h4 class="text-sm font-semibold text-gray-700">效果图识别结果</h4>
+              <span class="text-xs text-gray-400">共 {{ materialSetOptions.length }} 条</span>
             </div>
-            <span v-if="isConfirmed(m)" class="text-xs text-green-600 font-medium">✓ 已绑定</span>
-          </div>
-          <!-- 材质预览 -->
-          <div class="text-xs text-gray-500 mb-2 pl-6">
-            <span v-if="m.material_info.wall" class="mr-3">墙面: {{ m.material_info.wall }}</span>
-            <span v-if="m.material_info.floor" class="mr-3">地面: {{ m.material_info.floor }}</span>
-            <span v-if="m.material_info.ceiling">顶面: {{ m.material_info.ceiling }}</span>
-            <span v-if="!m.material_info.wall && !m.material_info.floor && !m.material_info.ceiling" class="text-gray-400">未识别到具体材质</span>
-          </div>
-          <!-- 匹配的CAD空间列表 -->
-          <div v-if="m.matched_cad_spaces.length > 0" class="space-y-1 pl-6">
-            <div v-for="cad in m.matched_cad_spaces" :key="cad.cad_id"
-                 class="flex items-center justify-between bg-gray-50 rounded px-2 py-1 text-sm">
-              <div class="flex items-center gap-2">
-                <span class="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">CAD</span>
-                <span>{{ cad.cad_name }}</span>
-                <span class="text-xs text-gray-400">{{ cad.area ? cad.area.toFixed(1) + '㎡' : '' }}</span>
-              </div>
-              <button v-if="!isCadConfirmed(m.image_id, cad.cad_id)"
-                      @click="confirmMatch(m.image_id, cad.cad_id)"
-                      class="text-xs px-3 py-1 rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50"
-                      :disabled="confirmingMatch[m.image_id+'-'+cad.cad_id]">
-                {{ confirmingMatch[m.image_id+'-'+cad.cad_id] ? '绑定中...' : '确认绑定' }}
+            <div v-if="materialSetOptions.length <= 2 && materialSetOptions.length" class="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden">
+              <button v-for="option in materialSetOptions" :key="option.key" type="button"
+                      class="w-full px-4 py-3 text-left hover:bg-blue-50/50 transition-colors"
+                      :class="draftSetName === option.key ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : 'bg-white'"
+                      @click="selectMaterialSet(option)">
+                <div class="flex items-start gap-3">
+                  <span class="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border"
+                        :class="draftSetName === option.key ? 'border-blue-500' : 'border-gray-300'">
+                    <span v-if="draftSetName === option.key" class="h-2 w-2 rounded-full bg-blue-500"></span>
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
+                      <span class="text-sm font-medium text-gray-800">{{ option.source }}</span>
+                      <span v-if="option.preferred" class="text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full self-start">当前空间相关</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">{{ option.relationship }}</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5 mt-2 text-xs">
+                      <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded">墙面：{{ option.material.wall || '—' }}</span>
+                      <span class="px-2 py-1 bg-green-50 text-green-700 rounded">地面：{{ option.material.floor || '—' }}</span>
+                      <span class="px-2 py-1 bg-purple-50 text-purple-700 rounded">顶面：{{ option.material.ceiling || '—' }}</span>
+                    </div>
+                  </div>
+                </div>
               </button>
-              <span v-else class="text-xs text-green-600">✓ 已绑定</span>
             </div>
-          </div>
-          <div v-else class="pl-6 text-sm text-yellow-600">
-            ⚠ 未找到匹配的CAD空间
+            <div v-else-if="materialSetOptions.length > 2" class="max-h-[250px] overflow-y-auto pr-1 space-y-2">
+              <div class="space-y-2">
+                <button v-for="option in materialSetOptions" :key="option.key" type="button"
+                        class="w-full rounded-xl border p-3 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40"
+                        :class="draftSetName === option.key ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-200' : 'border-gray-200 bg-white'"
+                        @click="selectMaterialSet(option)">
+                  <div class="flex items-start justify-between gap-2">
+                    <span class="text-sm font-medium text-gray-800 leading-5">{{ option.source }}</span>
+                    <span v-if="option.preferred" class="shrink-0 text-[10px] text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">当前空间相关</span>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1.5 min-h-[2.5rem]">{{ option.relationship }}</p>
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5 mt-2 text-xs">
+                    <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded">墙面：{{ option.material.wall || '—' }}</span>
+                    <span class="px-2 py-1 bg-green-50 text-green-700 rounded">地面：{{ option.material.floor || '—' }}</span>
+                    <span class="px-2 py-1 bg-purple-50 text-purple-700 rounded">顶面：{{ option.material.ceiling || '—' }}</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+            <div v-else class="border border-dashed border-gray-200 rounded-lg py-5 text-center text-xs text-gray-400">本批次没有可用的材质识别结果</div>
+          </section>
+
+          <section class="border-t border-gray-100 pt-4">
+            <div class="flex items-center justify-between gap-3 mb-3">
+              <h4 class="text-sm font-semibold text-gray-700">人工修改</h4>
+              <button v-if="draftSetName !== '自定义'" type="button" class="text-xs text-blue-600 hover:underline" @click="enableCustomSet">单独调整材质</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label v-for="surface in surfaces" :key="surface.key" class="block">
+                <span class="text-xs font-medium text-gray-600">{{ surface.label }}</span>
+                <input v-model="draftMaterial[surface.key]"
+                       class="mt-1 w-full border rounded-lg px-3 py-2 text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                       :class="isCustomSet ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-50 text-gray-500'"
+                       :disabled="!isCustomSet"
+                       :placeholder="surface.placeholder" />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="flex items-center justify-between gap-3 px-5 py-4 border-t border-gray-100">
+          <button class="btn-secondary text-sm" @click="clearDraft">清空材质</button>
+          <div class="flex items-center gap-2">
+            <button class="btn-secondary text-sm" @click="closeEditor">取消</button>
+            <button class="btn-primary text-sm" @click="saveEditor">保存材质</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 步骤3：人工绑定（备选方案） -->
-    <div class="card mb-4" v-if="selectedCadId">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">④ 人工空间-材质绑定（可选，修正未命名空间）</h3>
-      <div class="text-xs text-gray-400 mb-3">当自动匹配不准确时，可手动将CAD空间绑定到材质描述。</div>
-      <div class="space-y-2">
-        <div v-for="(cadId, idx) in cadBindingOptions" :key="cadId" class="flex items-center gap-3">
-          <select v-model="bindings[idx].cad_space_name" class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm">
-            <option value="">-- CAD空间 --</option>
-            <option v-for="s in currentCadSpaces" :key="s.id" :value="s.name || ('未命名#' + s.id)">
-              {{ s.name || ('未命名#' + s.id) }} ({{ s.area ? s.area.toFixed(1) : 0 }}㎡)
-            </option>
-          </select>
-          <input v-model="bindings[idx].material_desc" placeholder="材质描述（如：乳胶漆墙面）"
-                 class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm" />
-          <button @click="addBinding" class="text-primary-600 hover:text-primary-800 text-lg leading-none">＋</button>
-          <button v-if="bindings.length > 1" @click="removeBinding(idx)"
-                  class="text-red-400 hover:text-red-600 text-lg leading-none">×</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 执行融合 -->
-    <div class="flex items-center gap-4 mb-6">
-      <button class="btn-primary" :disabled="!selectedCadId || merging || loadingSuggestions"
-              @click="doMerge">
-        <svg v-if="merging" class="animate-spin w-4 h-4 inline mr-1" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-        {{ merging ? '融合中...' : '🔄 执行数据融合' }}
-      </button>
-      <span v-if="loadingSuggestions" class="text-xs text-blue-500 animate-pulse">正在分析匹配建议...</span>
-      <span v-if="mergeResult" class="text-xs text-green-600">✓ 融合完成</span>
-      <span v-if="mergeError" class="text-xs text-red-600">{{ mergeError }}</span>
-    </div>
-
-    <!-- 融合结果 -->
-    <QuoteDisplay v-if="mergeResult" :data="mergeResult" @export="handleExport" />
+    <QuoteDisplay v-if="quoteResult" :data="quoteResult" @export="handleExport" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, inject } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import API from '../services/api.js'
 import QuoteDisplay from './QuoteDisplay.vue'
 
-const refreshKey = inject('refreshKey', ref(0))
-const activeDrawingId = inject('activeDrawingId', ref(0))
-const latestImageResultIds = inject('latestImageResultIds', ref([]))
-
 const emit = defineEmits(['quote-exists'])
+const refreshKey = inject('refreshKey', ref(0))
 
-const cadResults = ref([])
-const imageResults = ref([])
-// 效果图列表有两种用户可见模式：
-// session = 本次页面会话上传结果，默认安全模式，避免混入同图纸旧记录；
-// all = 全部历史结果，用于用户显式跨项目复用。
-const imageResultScope = ref('session')
-const selectedCadId = ref(null)
-const selectedImageIds = ref([])
-const merging = ref(false)
-const mergeResult = ref(null)
-const mergeError = ref('')
-const bindings = ref([{ cad_space_name: '', material_desc: '' }])
+const loading = ref(false)
+const quoting = ref(false)
+const loadError = ref('')
+const quoteError = ref('')
+const currentData = ref(null)
+const quoteResult = ref(null)
+const manualMaterials = ref({})
+const editingRow = ref(null)
+const draftSetName = ref('自定义')
+const draftMaterial = ref({ wall: '', floor: '', ceiling: '' })
 
-// 空间列表
-const spaces = ref([])
-const spacesLoading = ref(false)
+const surfaces = [
+  { key: 'wall', label: '墙面材质', placeholder: '如：乳胶漆、墙布、木饰面' },
+  { key: 'floor', label: '地面材质', placeholder: '如：地砖、木地板、大理石' },
+  { key: 'ceiling', label: '顶面材质', placeholder: '如：石膏板吊顶、铝扣板' },
+]
 
-// 自动匹配建议
-const loadingSuggestions = ref(false)
-const suggestionMatches = ref([])
-const confirmedMatches = ref({})  // { "imageId-cadId": true }
-const confirmingMatch = ref({})   // { "imageId-cadId": true }
-const suppressActiveDrawingSync = ref(false)
+const currentBatch = computed(() => currentData.value?.data || currentData.value || null)
+const cadSpaces = computed(() => currentBatch.value?.cad_spaces || [])
+const imageResults = computed(() => currentBatch.value?.image_results || [])
 
-const cadBindingOptions = computed(() => bindings.value.map((_, i) => i))
-
-// 空态文案跟随模式变化，避免“当前图纸为空”时让用户误解为系统没有任何历史数据。
-const imageResultEmptyText = computed(() => {
-  if (imageResultScope.value === 'session') {
-    return latestImageResultIds.value.length > 0
-      ? '本次上传的效果图未归属到当前图纸，请确认上传时已选中当前图纸'
-      : '本次暂无新上传的效果图，可上传效果图或切换到「全部历史」复用历史材质'
+const candidatesBySpace = computed(() => {
+  const result = new Map()
+  for (const space of cadSpaces.value) {
+    const spaceName = space.space_name || space.name || ''
+    if (!spaceName) continue
+    const candidates = imageResults.value
+      .filter(image => namesMatch(spaceName, image.space_name || image.recognized_space || ''))
+      .map(image => normalizeImageMaterial(image))
+    result.set(spaceName, candidates)
   }
-  return '历史库暂无效果图识别记录，请先在「首页」上传效果图'
+  return result
 })
 
-function materialSummary(r) {
-  // 后端会返回 wall_material/floor_material/ceiling_material 摘要；
-  // 这里仍兼容直接从 material_info 读取，保证旧接口缓存或旧数据也能展示材质。
-  const material = r.material_info || {}
-  const wall = r.wall_material || material.wall || material['墙面材质']
-  const floor = r.floor_material || material.floor || material['地面材质']
-  const ceiling = r.ceiling_material || material.ceiling || material['顶面材质']
-  return [
-    wall ? `墙: ${wall}` : '',
-    floor ? `地: ${floor}` : '',
-    ceiling ? `顶: ${ceiling}` : '',
-  ].filter(Boolean).join(' / ')
-}
-
-function formatDateTime(value) {
-  // 后端时间可能是 ISO 格式或普通字符串；列表只需要分钟级信息用于人工区分记录。
-  if (!value) return ''
-  return String(value).replace('T', ' ').slice(0, 16)
-}
-
-const currentCadSpaces = computed(() => {
-  // 优先从实时加载的空间列表取
-  if (spaces.value.length > 0) return spaces.value
-  // 备选：从CAD结果中提取
-  const cad = cadResults.value.find(r => r.id === selectedCadId.value)
-  return cad?.detail_json?.spaces || cad?.spaces || []
+const imageSequenceByKey = computed(() => {
+  const result = new Map()
+  imageResults.value.forEach((image, index) => {
+    result.set(getImageKey(image), index + 1)
+  })
+  return result
 })
 
-const showSuggestions = computed(() => {
-  return selectedCadId.value && selectedImageIds.value.length > 0
+const imagesByRecognizedSpace = computed(() => {
+  const result = new Map()
+  for (const image of imageResults.value) {
+    const spaceName = getImageSpace(image)
+    const images = result.get(spaceName) || []
+    images.push(image)
+    result.set(spaceName, images)
+  }
+  return result
 })
 
-function isConfirmed(m) {
-  return m.matched_cad_spaces.some(cad => confirmedMatches.value[m.image_id + '-' + cad.cad_id])
-}
-
-function isCadConfirmed(imageId, cadId) {
-  return !!confirmedMatches.value[imageId + '-' + cadId]
-}
-
-function getMatchCardClass(m) {
-  if (isConfirmed(m)) return 'border-green-200 bg-green-50'
-  if (m.matched_cad_spaces.length === 0) return 'border-yellow-200 bg-yellow-50'
-  return ''
-}
-
-function addBinding() { bindings.value.push({ cad_space_name: '', material_desc: '' }) }
-function removeBinding(idx) { bindings.value.splice(idx, 1) }
-
-async function loadResults() {
-  // 加载所有已解析CAD图纸（不限量）
-  try {
-    const drawingsRes = await API.get('/drawings')
-    if (drawingsRes.success && Array.isArray(drawingsRes.data)) {
-      const parsed = drawingsRes.data.filter(d => d.parse_status === 'completed' && d.cad_result_json)
-      cadResults.value = parsed.map(d => ({
-        id: d.id,
-        drawing_name: d.filename || ('图纸#' + d.id),
-        space_count: d.cad_result_json?.space_count || d.cad_result_json?.spaces_count || d.space_count || 0,
-        detail_json: d.cad_result_json,
-        total_area: d.cad_result_json?.total_area || d.total_area || 0,
-      }))
-    }
-  } catch (e) {}
-  // 如果没从drawings取到，回退到从历史记录取
-  if (cadResults.value.length === 0) {
-    const h = await API.getHistory(1, 50)
-    if (h.success && h.data?.quotes?.items) {
-      const seen = new Set()
-      h.data.quotes.items.forEach(q => {
-        if (q.cad_result_id && !seen.has(q.cad_result_id)) {
-          seen.add(q.cad_result_id)
-          cadResults.value.push({
-            id: q.cad_result_id,
-            drawing_name: q.project_name || ('图纸#' + q.cad_result_id),
-            space_count: q.space_count || 0,
-            detail_json: q.cad_detail_json || q.detail_json,
-          })
-        }
-      })
-    }
+const cadMatchesByImage = computed(() => {
+  const result = new Map()
+  for (const image of imageResults.value) {
+    const imageKey = getImageKey(image)
+    const imageSpace = image.space_name || image.recognized_space || ''
+    if (!imageKey || !imageSpace) continue
+    const matchedSpaces = cadSpaces.value.filter(space => namesMatch(space.space_name || space.name, imageSpace))
+    result.set(imageKey, matchedSpaces)
   }
-  // 自动选中图纸：
-  // 1. 优先对齐 App 中的 activeDrawingId，也就是本次效果图上传实际绑定的图纸；
-  // 2. 没有 activeDrawingId 时才默认选最新图纸；
-  // 3. 不能只在 selectedCadId 为空时处理，否则上传新图纸后仍会停留在旧图纸，导致“本次上传”按旧图纸查询后为空。
-  const activeId = Number(activeDrawingId.value) || 0
-  const hasActiveDrawing = activeId && cadResults.value.some(r => Number(r.id) === activeId)
-  const nextSelectedId = hasActiveDrawing ? activeId : (!selectedCadId.value ? cadResults.value[0]?.id : selectedCadId.value)
-  if (nextSelectedId && Number(selectedCadId.value) !== Number(nextSelectedId)) {
-    const isAutoSelectingHistoricalDrawing = !activeId && !selectedCadId.value
-    if (isAutoSelectingHistoricalDrawing) suppressActiveDrawingSync.value = true
-    try {
-      selectedCadId.value = nextSelectedId
-      await loadSpaces()
-    } finally {
-      if (isAutoSelectingHistoricalDrawing) suppressActiveDrawingSync.value = false
-    }
-  }
-  // 🌟 加载效果图识别结果：尝试专用接口 + 历史记录回退
-  await loadImageResults()
-}
+  return result
+})
 
-// 🌟 加载效果图识别结果（独立函数，便于复用）
-async function loadImageResults() {
-  imageResults.value = []
-  // 只调用专用接口，不再从报价历史中静默拼装结果：
-  // 本次上传模式内部仍查询当前图纸，再按 latestImageResultIds 做前端过滤；
-  // 用户界面不再暴露“当前图纸全部”，避免把旧记录混入默认选择。
-  try {
-    const queryScope = imageResultScope.value === 'all' ? 'all' : 'current'
-    const imgRes = await API.getImageResults({
-      scope: queryScope,
-      drawingId: selectedCadId.value,
-      pageSize: 200,
+const fusionRows = computed(() => cadSpaces.value.map((space, idx) => {
+  const spaceName = space.space_name || space.name || `未命名#${idx + 1}`
+  const manual = manualMaterials.value[spaceName] || {}
+  const candidates = candidatesBySpace.value.get(spaceName) || []
+  const uniqueCandidate = candidates.length === 1 ? candidates[0] : null
+  const reverseMatches = uniqueCandidate ? cadMatchesByImage.value.get(getImageKey(uniqueCandidate.image)) || [] : []
+  const auto = uniqueCandidate && reverseMatches.length === 1 ? uniqueCandidate : null
+  const hasManual = hasAnyMaterial(manual)
+  const isAmbiguous = candidates.length > 1 || (uniqueCandidate && reverseMatches.length > 1)
+  return {
+    key: space.id || spaceName,
+    space_name: spaceName,
+    area: Number(space.area_sqm ?? space.area ?? 0),
+    status: hasManual ? 'manual' : (auto ? 'auto' : (isAmbiguous ? 'candidate' : 'unmatched')),
+    material: hasManual ? manual : (auto?.material || {}),
+    image: auto?.image || null,
+    candidates,
+  }
+}))
+
+const autoRows = computed(() => fusionRows.value.filter(row => row.status === 'auto'))
+const manualNeededRows = computed(() => fusionRows.value.filter(row => row.status !== 'auto'))
+const candidateRows = computed(() => manualNeededRows.value.filter(row => row.status === 'candidate'))
+const manualMatchedCount = computed(() => fusionRows.value.filter(row => row.status === 'manual').length)
+const unresolvedCount = computed(() => fusionRows.value.filter(row => row.status === 'candidate' || row.status === 'unmatched').length)
+
+const materialSetOptions = computed(() => {
+  const seen = new Set()
+  const options = []
+  const images = [
+    ...(editingRow.value?.candidates?.map(candidate => candidate.image) || []),
+    ...imageResults.value,
+  ]
+  for (const image of images) {
+    const material = normalizeMaterial(image.material_info || image)
+    if (!hasAnyMaterial(material)) continue
+    const key = `${getImageKey(image)}|${material.wall}|${material.floor}|${material.ceiling}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const source = sourceLabel(image)
+    const relationship = imageRelationshipText(image)
+    const preferred = editingRow.value?.candidates?.some(candidate => getImageKey(candidate.image) === getImageKey(image)) || false
+    options.push({
+      key,
+      source,
+      relationship,
+      material,
+      preferred,
     })
-    if (imgRes.success) {
-      // 新接口返回 {items, scope, drawing_id}；保留 Array 兼容是为了不破坏旧后端响应。
-      const items = Array.isArray(imgRes.data) ? imgRes.data : (imgRes.data?.items || [])
-      const latestIdSet = new Set(latestImageResultIds.value.map(id => Number(id)))
-      const scopedItems = imageResultScope.value === 'session'
-        ? items.filter(img => latestIdSet.has(Number(img.id || img.image_result_id)))
-        : items
-      imageResults.value = scopedItems.map(img => ({
-        id: img.id || img.image_result_id,
-        drawing_id: img.drawing_id || 0,
-        recognized_space: img.recognized_space || img.space_name || '未识别',
-        original_filename: img.original_filename || img.filename || ('图片#' + (img.id || 0)),
-        confidence: img.confidence || 0,
-        material_info: img.material_info || {},
-        wall_material: img.wall_material || '',
-        floor_material: img.floor_material || '',
-        ceiling_material: img.ceiling_material || '',
-        create_time: img.create_time || '',
-      }))
-      return  // 成功获取到数据就直接返回
-    }
-  } catch (e) {
-    // 接口失败时保持空列表，让页面显示当前模式的空态文案；不再隐式混入历史数据。
-    imageResults.value = []
   }
-}
-
-async function loadSpaces() {
-  if (!selectedCadId.value) return
-  spacesLoading.value = true
-  try {
-    // 先尝试获取分层明细
-    const res = await API.getBreakdown(parseInt(selectedCadId.value))
-    if (res.success && res.data?.spaces) {
-      spaces.value = res.data.spaces.map(s => ({
-        id: s.id || s.space_id,
-        name: s.space_name || ('未命名#' + (s.id || 0)),
-        area: s.area || 0,
-      }))
-    } else {
-      // 回退：从CAD结果JSON提取
-      const cad = cadResults.value.find(r => r.id === selectedCadId.value)
-      const raw = cad?.detail_json?.spaces || cad?.spaces || []
-      spaces.value = raw.map((s, i) => ({
-        id: s.id || i,
-        name: s.name || s.space_name || ('未命名#' + (s.id || i)),
-        area: s.area || s.area_sqm || 0,
-      }))
-    }
-  } catch (e) {
-    spaces.value = []
-  }
-  spacesLoading.value = false
-}
-
-onMounted(loadResults)
-
-// 当选中的CAD变更时加载空间列表 并刷新效果图列表
-watch(selectedCadId, async (newId) => {
-  // 将融合报价当前选中的图纸同步给首页效果图上传使用。
-  // 只同步 drawing_records.id，不改变融合计算、历史报价或其它模块行为。
-  if (!suppressActiveDrawingSync.value) {
-    activeDrawingId.value = Number(newId) || 0
-  }
-  selectedImageIds.value = []
-  suggestionMatches.value = []
-  confirmedMatches.value = {}
-  if (newId) {
-    await loadSpaces()
-    await loadImageResults()
-  } else {
-    spaces.value = []
-  }
+  return options
 })
 
-// 当前图纸 / 全部历史切换时，重新加载并清空旧选择
-watch(imageResultScope, async () => {
-  selectedImageIds.value = []
-  suggestionMatches.value = []
-  confirmedMatches.value = {}
-  await loadImageResults()
+const isCustomSet = computed(() => draftSetName.value === '自定义')
+
+onMounted(loadCurrentBatch)
+
+watch(refreshKey, () => {
+  loadCurrentBatch()
 })
 
-// 本次上传完成后 App 会更新 latestImageResultIds；默认模式需要立即刷新为“本次结果”。
-watch(latestImageResultIds, async () => {
-  if (imageResultScope.value === 'session') {
-    selectedImageIds.value = []
-    suggestionMatches.value = []
-    confirmedMatches.value = {}
-    await loadImageResults()
-  }
-})
-
-// 当选择变更时自动触发匹配建议
-watch([selectedCadId, selectedImageIds], async ([newCadId, newImgIds]) => {
-  if (newCadId && newImgIds && newImgIds.length > 0) {
-    await loadSuggestions()
-  } else {
-    suggestionMatches.value = []
-    confirmedMatches.value = {}
-  }
-})
-
-// 🌟 当 App 中分析完成时自动重新加载
-watch(refreshKey, async () => {
-  await loadResults()
-})
-
-async function loadSuggestions() {
-  loadingSuggestions.value = true
-  suggestionMatches.value = []
-  confirmedMatches.value = {}
-  const res = await API.autoSuggestMatch(selectedCadId.value, selectedImageIds.value)
-  if (res.success && res.data?.matches) {
-    suggestionMatches.value = res.data.matches
-  }
-  loadingSuggestions.value = false
-}
-
-async function confirmMatch(imageId, cadId) {
-  const key = imageId + '-' + cadId
-  confirmingMatch.value[key] = true
-  const res = await API.autoConfirmMatch(cadId, imageId)
+async function loadCurrentBatch() {
+  loading.value = true
+  loadError.value = ''
+  quoteError.value = ''
+  quoteResult.value = null
+  const res = await API.getCurrentFusionData()
   if (res.success) {
-    confirmedMatches.value[key] = true
+    currentData.value = res
+    seedManualMaterials()
+  } else {
+    currentData.value = null
+    loadError.value = res.message || '暂无当前批次识别结果'
   }
-  confirmingMatch.value[key] = false
+  loading.value = false
 }
 
-async function doMerge() {
-  merging.value = true
-  mergeError.value = ''
-  mergeResult.value = null
-  const bindingsJson = bindings.value
-    .filter(b => b.cad_space_name && b.material_desc)
-    .map(b => ({ space_name: b.cad_space_name, material: b.material_desc }))
-  const res = await API.dataMerge(selectedCadId.value, selectedImageIds.value, bindingsJson)
+function seedManualMaterials() {
+  const next = {}
+  for (const space of cadSpaces.value) {
+    const spaceName = space.space_name || space.name
+    if (spaceName) next[spaceName] = manualMaterials.value[spaceName] || { wall: '', floor: '', ceiling: '' }
+  }
+  manualMaterials.value = next
+}
+
+function openEditor(row) {
+  editingRow.value = row
+  const current = normalizeMaterial(row.material || manualMaterials.value[row.space_name] || {})
+  if (!hasAnyMaterial(current) && row.candidates?.length) {
+    draftMaterial.value = defaultMaterialFromCandidates(row.candidates)
+    draftSetName.value = materialSetNameForMaterial(draftMaterial.value) || '自定义'
+    return
+  }
+  draftMaterial.value = current
+  draftSetName.value = materialSetNameForMaterial(current) || '自定义'
+}
+
+function closeEditor() {
+  editingRow.value = null
+}
+
+function clearDraft() {
+  draftSetName.value = '自定义'
+  draftMaterial.value = { wall: '', floor: '', ceiling: '' }
+}
+
+function saveEditor() {
+  if (!editingRow.value) return
+  manualMaterials.value[editingRow.value.space_name] = normalizeMaterial(draftMaterial.value)
+  closeEditor()
+}
+
+function applyMaterialSet(material) {
+  draftMaterial.value = normalizeMaterial(material)
+}
+
+function selectMaterialSet(option) {
+  draftSetName.value = option.key
+  applyMaterialSet(option.material)
+}
+
+function enableCustomSet() {
+  draftSetName.value = '自定义'
+}
+
+function isSameMaterialSet(left, right) {
+  const a = normalizeMaterial(left)
+  const b = normalizeMaterial(right)
+  return a.wall === b.wall && a.floor === b.floor && a.ceiling === b.ceiling
+}
+
+function materialSetNameForMaterial(material) {
+  const normalized = normalizeMaterial(material)
+  const option = materialSetOptions.value.find(item => isSameMaterialSet(item.material, normalized))
+  return option?.key || ''
+}
+
+function defaultMaterialFromCandidates(candidates) {
+  const material = { wall: '', floor: '', ceiling: '' }
+  for (const surface of surfaces) {
+    const candidate = candidates.find(item => item.material?.[surface.key])
+    material[surface.key] = candidate?.material?.[surface.key] || ''
+  }
+  return material
+}
+
+async function generateQuote() {
+  quoting.value = true
+  quoteError.value = ''
+  const manualBindings = fusionRows.value
+    .filter(row => row.status === 'manual')
+    .map(row => ({
+      space_name: row.space_name,
+      material_info: normalizeMaterial(row.material),
+    }))
+  const res = await API.quoteLatestFusion(manualBindings)
   if (res.success) {
-    mergeResult.value = res
+    quoteResult.value = res
     refreshKey.value++
     emit('quote-exists', res.data?.quote_id)
   } else {
-    mergeError.value = res.message || '融合失败'
+    quoteError.value = res.message || '生成融合报价失败'
   }
-  merging.value = false
+  quoting.value = false
 }
 
-function handleExport(quoteId) {
-  emit('quote-exists', quoteId)
+function normalizeImageMaterial(image) {
+  const material = normalizeMaterial(image.material_info || image)
+  return { image, material, optionKey: `${getImageKey(image)}:${material.wall}|${material.floor}|${material.ceiling}` }
 }
+
+function normalizeMaterial(material) {
+  return {
+    wall: material?.wall || material?.wall_material || material?.墙面材质 || '',
+    floor: material?.floor || material?.floor_material || material?.地面材质 || '',
+    ceiling: material?.ceiling || material?.ceiling_material || material?.顶面材质 || '',
+  }
+}
+
+function hasAnyMaterial(material) {
+  return !!(material?.wall || material?.floor || material?.ceiling)
+}
+
+function namesMatch(cadName = '', imageName = '') {
+  const left = String(cadName).trim()
+  const right = String(imageName).trim()
+  if (!left || !right) return false
+  if (left === right) return true
+  if (left.includes(right) || right.includes(left)) return true
+  const groups = [
+    ['客厅', '大厅', '起居室', '客餐厅'],
+    ['主卧', '主人房'],
+    ['次卧', '卧室', '客房', '儿童房', '老人房'],
+    ['厨房', '西厨', '中厨'],
+    ['卫生间', '主卫', '客卫', '卫浴'],
+    ['餐厅', '饭厅'],
+    ['阳台', '生活阳台', '入户花园'],
+    ['衣帽间', '衣帽区'],
+  ]
+  return groups.some(group => group.some(name => left.includes(name)) && group.some(name => right.includes(name)))
+}
+
+function getImageSpace(image) {
+  return image?.space_name || image?.recognized_space || '未识别空间'
+}
+
+function getImageFilename(image) {
+  return image?.filename || image?.original_filename || (getImageKey(image) ? `图片#${getImageKey(image)}` : '未知图片')
+}
+
+function sourceLabel(image) {
+  return `${getImageSpace(image)} · 图${imageSequenceByKey.value.get(getImageKey(image)) || '?'} · ${getImageFilename(image)}`
+}
+
+function imageRelationshipText(image) {
+  const spaceName = getImageSpace(image)
+  const sameSpaceImages = imagesByRecognizedSpace.value.get(spaceName) || []
+  const matchedSpaces = cadMatchesByImage.value.get(getImageKey(image)) || []
+  const parts = []
+  if (sameSpaceImages.length > 1) parts.push(`该空间有 ${sameSpaceImages.length} 张效果图`)
+  if (matchedSpaces.length > 1) parts.push(`该图对应 ${matchedSpaces.length} 个 CAD 空间：${matchedSpaces.map(space => space.space_name || space.name).join('、')}`)
+  if (matchedSpaces.length === 1) parts.push(`对应 CAD 空间：${matchedSpaces[0].space_name || matchedSpaces[0].name}`)
+  return parts.join('；') || '当前图仅对应一个识别空间'
+}
+
+function getImageKey(image) {
+  return String(image?.id || image?.image_result_id || image?.filename || image?.original_filename || '')
+}
+
+function shortStatusText(status) {
+  return {
+    auto: '自动',
+    manual: '已编',
+    candidate: '候选',
+    unmatched: '待填',
+  }[status] || '未知'
+}
+
+function statusClass(status) {
+  return {
+    auto: 'bg-green-50 text-green-700',
+    manual: 'bg-blue-50 text-blue-700',
+    candidate: 'bg-orange-50 text-orange-700',
+    unmatched: 'bg-yellow-50 text-yellow-700',
+  }[status] || 'bg-gray-50 text-gray-600'
+}
+
+function formatNum(value) {
+  const num = Number(value || 0)
+  return Number.isFinite(num) ? num.toFixed(2) : '0.00'
+}
+
+function handleExport() {}
 </script>

@@ -611,12 +611,20 @@ async function clearServerUploadsQuietly() {
   try { await API.post('/upload/clear', {}) } catch (e) {}
 }
 
+async function clearCurrentFusionDataQuietly() {
+  try { await API.clearCurrentFusionData() } catch (e) {}
+}
+
 async function onCadFileChange(f) {
-  if (cadFile.value && cadFile.value !== f) await clearServerUploadsQuietly()
+  if (cadFile.value && cadFile.value !== f) {
+    await clearServerUploadsQuietly()
+    await clearCurrentFusionDataQuietly()
+  }
   cadFile.value = f
   cadDone.value = !!f
   cadResult.value = null
   activeDrawingId.value = 0
+  latestImageResultIds.value = []
   clearSavedMeasurementResult()
   analysisDone.value = false
 }
@@ -667,6 +675,7 @@ async function clearFiles() {
   // 后端同步删除临时文件
   try {
     await clearServerUploadsQuietly()
+    await clearCurrentFusionDataQuietly()
   } catch (e) { /* 静默处理 */ }
   cadFile.value = null
   imageFile.value = null
