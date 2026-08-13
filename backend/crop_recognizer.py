@@ -170,3 +170,75 @@ class CropRecognizer:
             #     "crop_dir": crop_debug_dir,
             # },
         }
+        
+    def recognize_with_crop_no_full(
+            self,
+            image_path: str,
+            space_type: str,
+            model: str,
+            upload_dir: Path,
+            task_id: str,
+        ) -> dict:
+            """
+            执行分区域裁剪识别，但不识别空间类型（直接从文件名中获取）。
+            """
+            timings = {}
+            t0 = time.time()
+    
+            # ====== 步骤1：裁剪区域 ======
+            crops = self.preprocessor.crop_regions(image_path)
+            timings["crop"] = round(time.time() - t0, 3)
+    
+            # ====== 步骤2：保存裁剪图片（调试用）=====
+            # crop_paths, crop_debug_dir = "", ""
+            # t_save = time.time()
+            # crop_paths, crop_debug_dir = self.save_crop_images(
+            #     crops, upload_dir, task_id
+            # )
+            # timings["store_crop_img"] = round(time.time() - t_save, 3)
+    
+            # ====== 步骤3：分区域推理 ======
+            crop_results = {"space_type": space_type}
+            for region_name, region_b64 in crops.items():
+                region_t0 = time.time()
+    
+                # 裁剪区域 → 材质
+                field = REGION_TO_FIELD.get(region_name, region_name)
+                prompt = build_crop_prompt(field)
+    
+                if not prompt:
+                    logger.warning(
+                        "未找到区域 %s (field=%s) 对应的 prompt，跳过",                            region_name, field,
+                    )
+                    continue
+    
+                try:
+                    raw_text = self.inferrer.infer(prompt, region_b64, model=model, model_type=self._model_type)
+                    parsed = extract_json(raw_text)
+                    if parsed:
+                        crop_results.update(parsed)
+                    timings[f"inference_{region_name}"] = round(time.time() - region_t0, 3)
+                except Exception as e:
+                    logger.error("区域 %s 推理失败: %s", region_name, e)
+                    timings[f"inference_{region_name}"] = round(time.time() - region_t0, 3)
+    
+            # ====== 步骤4：合并结果 ======
+            structured = normalize_result(crop_results)
+            structured["_crop_mode"] = "enabled"
+            structured["_crop_details"] = {
+                "regions_processed": list(crops.keys()),
+                "fields_extracted": list(crop_results.keys()),
+            }
+    
+            return {
+                "success": True,
+                "structured": structured,
+                "raw_response": "",
+                "model_used": model,
+                "error": "",
+                "timing": timings,
+                # "debug": {
+                #     "crop_images": crop_paths,
+                #     "crop_dir": crop_debug_dir,
+                # },
+            }
