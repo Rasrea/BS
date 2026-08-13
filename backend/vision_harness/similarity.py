@@ -35,8 +35,8 @@ MATERIAL_HIERARCHY: Dict[str, Dict[str, List[str]]] = {
     },
     "space_type": {
         "居住空间":  ["客厅", "餐厅", "卧室", "书房"],
-        "功能空间":  ["厨房", "卫生间", "储物间"],
-        "连接空间":  ["走廊", "阳台"],
+        "功能空间":  ["厨房", "卫生间", "储物间", "衣帽间"],
+        "连接空间":  ["走廊", "阳台", "门厅"],
         "休闲空间":  ["休闲区"],
     },
 }
@@ -108,10 +108,11 @@ def compute_material_similarity(
     
     逻辑:
     1. 完全一致 → 1.0
-    2. 同义词匹配 → 1.0 (复用 SYNONYM_GROUPS)
-    3. 同一子类组 → SAME_GROUP_BASE_SIMILARITY
-    4. 有跨组特例 → 特例值
-    5. 否则 → 0.0
+    2. is-a 关系匹配 → 0.92（仅 space_type，粗粒度大类 ↔ 细粒度子类型）
+    3. 同义词匹配 → 1.0 (复用 SYNONYM_GROUPS)
+    4. 同一子类组 → SAME_GROUP_BASE_SIMILARITY
+    5. 有跨组特例 → 特例值
+    6. 否则 → 0.0
     """
     if not predicted or not expected:
         return 0.0
@@ -123,24 +124,39 @@ def compute_material_similarity(
     if p == e:
         return 1.0
     
-    # ── 2. 同义词匹配（复用 material_library 的 SYNONYM_GROUPS）─
+    # ── 2. is-a 关系匹配（粗粒度大类 ↔ 细粒度子类型）──
+    # 效果图识别输出十二大类，ground truth 可能是细粒度（如 主卧/次卧）
+    # 通过 space_synonyms.CONTAINS_MAP 判断：一方是另一方的子类型 → 高相似度
+    if field == "space_type":
+        try:
+            from space_synonyms import CONTAINS_MAP
+            # p 是 e 的子类型（如 p="主卧", e="卧室"）
+            if p in CONTAINS_MAP and e in CONTAINS_MAP[p]:
+                return 0.92
+            # e 是 p 的子类型（如 p="卧室", e="主卧"）
+            if e in CONTAINS_MAP and p in CONTAINS_MAP[e]:
+                return 0.92
+        except ImportError:
+            pass
+
+    # ── 3. 同义词匹配（复用 material_library 的 SYNONYM_GROUPS）─
     from vision_harness.material_library import SYNONYM_GROUPS
     for group in SYNONYM_GROUPS:
         if p in group and e in group:
             return 1.0
     
-    # ── 3. 层次化类别匹配 ──
+    # ── 4. 层次化类别匹配 ──
     hierarchy = MATERIAL_HIERARCHY.get(field, {})
     material_to_group, _ = _build_group_index(field)
     
     pg = material_to_group.get(p)
     eg = material_to_group.get(e)
     
-    # 3a. 同一子类组
+    # 4a. 同一子类组
     if pg and eg and pg == eg:
         return SAME_GROUP_BASE_SIMILARITY
     
-    # 3b. 跨组特例
+    # 4b. 跨组特例
     overrides = CROSS_GROUP_OVERRIDES.get(field, {})
     # 查双向
     if (p, e) in overrides:
@@ -148,7 +164,7 @@ def compute_material_similarity(
     if (e, p) in overrides:
         return overrides[(e, p)]
     
-    # 3c. 非同一组且无特例
+    # 4c. 非同一组且无特例
     return 0.0
 
 def evaluate_similarity(
