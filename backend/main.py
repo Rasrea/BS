@@ -1536,6 +1536,29 @@ async def quote_latest_fusion(manual_bindings: str = Form("[]")):
         if acquired:
             await task_state.release()
 
+@app.get("/api/analyze/quote_latest")
+async def get_latest_quote_result():
+    """读取最近一次融合报价（只读，不重新计算、不写库）
+    入参：无
+    返回：最近一条报价记录，含报价ID与完整报价明细，无记录时返回404
+    """
+    quote = await db.get_latest_quote()
+    if not quote:
+        return err(404, "暂无报价记录，请先生成报价", task_status=STATE_IDLE)
+    return ok({
+        "quote_id": quote.get("id", 0),
+        "base_price": quote.get("base_price", 0),
+        "material_diff_price": quote.get("material_diff_price", 0),
+        "process_add_price": quote.get("process_add_price", 0),
+        "loss_price": quote.get("loss_price", 0),
+        "manage_fee": quote.get("manage_fee", 0),
+        "tax_fee": quote.get("tax_fee", 0),
+        "final_price": quote.get("final_price", 0),
+        "items": quote.get("quote_detail_json", []),
+        "project_name": quote.get("project_name", ""),
+        "create_time": quote.get("create_time", ""),
+    }, task_status=STATE_IDLE)
+
 @app.post("/api/vision_test")
 async def vision_test(
     image_file: UploadFile = File(None),
