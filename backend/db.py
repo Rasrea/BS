@@ -580,6 +580,13 @@ class Database:
         )
         return _row_to_dict(row) if row else None
 
+    async def get_latest_quote(self):
+        """读取最近一条报价记录（只读，未删除）"""
+        row = await self.fetchone(
+            "SELECT * FROM quote_records WHERE is_deleted=0 ORDER BY id DESC LIMIT 1"
+        )
+        return _row_to_dict(row) if row else None
+
     async def get_quotes(self, page: int = 1, page_size: int = 20):
         offset = (page - 1) * page_size
         rows = await self.fetchall(
