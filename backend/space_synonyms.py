@@ -541,6 +541,21 @@ def match_space_name(cad_name: str, ai_name: str) -> bool:
     return _match_impl(cad_name, ai_name, _depth=0)
 
 
+def is_exact_space_name(cad_name: str, ai_name: str) -> bool:
+    """判断两个有效空间名在去除首尾空格后是否完全相同。"""
+    if not cad_name or not ai_name:
+        return False
+    cad_name = str(cad_name).strip()
+    ai_name = str(ai_name).strip()
+    return (
+        bool(cad_name)
+        and bool(ai_name)
+        and is_valid_space_name(cad_name)
+        and is_valid_space_name(ai_name)
+        and cad_name == ai_name
+    )
+
+
 def get_matched_spaces(cad_name: str) -> List[str]:
     """
     根据 CAD 空间名，返回所有可能匹配的 AI 空间标准名列表。
