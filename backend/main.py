@@ -1268,6 +1268,12 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
                         "cad_name": cad_name,
                         "area": cad.get("area", 0),
                     })
+            exact_candidates = [
+                candidate for candidate in candidates
+                if space_synonyms.is_exact_space_name(candidate["cad_name"], raw_space)
+            ]
+            if exact_candidates:
+                candidates = exact_candidates
             if len(candidates) == 1:
                 cad_name = candidates[0]["cad_name"]
                 existing = ai_material_index.get(cad_name)

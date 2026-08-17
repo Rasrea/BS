@@ -275,8 +275,10 @@ const candidatesBySpace = computed(() => {
   for (const space of cadSpaces.value) {
     const spaceName = space.space_name || space.name || ''
     if (!spaceName) continue
-    const candidates = imageResults.value
+    const matchedImages = imageResults.value
       .filter(image => namesMatch(spaceName, image.space_name || image.recognized_space || ''))
+    const exactImages = matchedImages.filter(image => exactSpaceNamesMatch(spaceName, getImageSpace(image)))
+    const candidates = (exactImages.length ? exactImages : matchedImages)
       .map(image => normalizeImageMaterial(image))
     result.set(spaceName, candidates)
   }
@@ -309,7 +311,8 @@ const cadMatchesByImage = computed(() => {
     const imageSpace = image.space_name || image.recognized_space || ''
     if (!imageKey || !imageSpace) continue
     const matchedSpaces = cadSpaces.value.filter(space => namesMatch(space.space_name || space.name, imageSpace))
-    result.set(imageKey, matchedSpaces)
+    const exactSpaces = matchedSpaces.filter(space => exactSpaceNamesMatch(space.space_name || space.name, imageSpace))
+    result.set(imageKey, exactSpaces.length ? exactSpaces : matchedSpaces)
   }
   return result
 })
@@ -320,9 +323,11 @@ const fusionRows = computed(() => cadSpaces.value.map((space, idx) => {
   const candidates = candidatesBySpace.value.get(spaceName) || []
   const uniqueCandidate = candidates.length === 1 ? candidates[0] : null
   const reverseMatches = uniqueCandidate ? cadMatchesByImage.value.get(getImageKey(uniqueCandidate.image)) || [] : []
-  const auto = uniqueCandidate && reverseMatches.length === 1 ? uniqueCandidate : null
+  const auto = uniqueCandidate && reverseMatches.length === 1 && sameCadSpace(reverseMatches[0], space)
+    ? uniqueCandidate
+    : null
   const hasManual = hasAnyMaterial(manual)
-  const isAmbiguous = candidates.length > 1 || (uniqueCandidate && reverseMatches.length > 1)
+  const isAmbiguous = candidates.length > 1 || (uniqueCandidate && !auto)
   return {
     key: space.id || spaceName,
     space_name: spaceName,
@@ -515,6 +520,17 @@ function namesMatch(cadName = '', imageName = '') {
     ['衣帽间', '衣帽区'],
   ]
   return groups.some(group => group.some(name => left.includes(name)) && group.some(name => right.includes(name)))
+}
+
+function exactSpaceNamesMatch(leftName = '', rightName = '') {
+  const left = String(leftName).trim()
+  const right = String(rightName).trim()
+  return !!left && !!right && left === right
+}
+
+function sameCadSpace(left, right) {
+  if (left?.id != null && right?.id != null) return String(left.id) === String(right.id)
+  return exactSpaceNamesMatch(left?.space_name || left?.name, right?.space_name || right?.name)
 }
 
 function getImageSpace(image) {
