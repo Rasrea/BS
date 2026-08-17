@@ -369,18 +369,18 @@ const materialSetOptions = computed(() => {
 
 const isCustomSet = computed(() => draftSetName.value === '自定义')
 
-onMounted(loadCurrentBatch)
+onMounted(loadFusionPreview)
 
 watch(refreshKey, () => {
-  loadCurrentBatch()
+  loadFusionPreview()
 })
 
-async function loadCurrentBatch() {
+async function loadFusionPreview() {
   loading.value = true
   loadError.value = ''
   quoteError.value = ''
   quoteResult.value = null
-  const res = await API.getCurrentFusionData()
+  const res = await API.getFusionMatches()
   if (res.success) {
     currentData.value = res
     seedManualMaterials()

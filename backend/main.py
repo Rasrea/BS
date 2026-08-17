@@ -983,7 +983,6 @@ async def analyze_image(
     image_file: UploadFile = File(None),
     model: str = Form(""),
     crop_enabled: str = Form("true"),
-    full_enabled: str = Form("false"),
     drawing_id: int = Form(0),
     file_count: int = Form(1),
     batch_id: str = Form(""),
@@ -1031,12 +1030,8 @@ async def analyze_image(
     vl_api_token = model_info.get("api_token") if model_info else None
     vl_api_format = model_info.get("api_format") if model_info else None
 
-    # 是否启用图像裁剪
     use_crop = crop_enabled.lower() in ("true", "1", "yes")
-    
-    # 是否识别空间名称
-    recognize_full = full_enabled.lower() in ("true", "1", "yes")
-    
+
     if use_crop:
         from crop_recognizer import CropRecognizer
         recognizer = CropRecognizer(
@@ -1045,24 +1040,12 @@ async def analyze_image(
             api_token=vl_api_token,
             api_format=vl_api_format,
         )
-        
-        if recognize_full:
-            recognition_result = recognizer.recognize_with_crop(
-                image_path=processed_path,
-                model=vl_model,
-                upload_dir=UPLOAD_DIR,
-                task_id=task_id,
-            )
-        else:
-            space_type = image_file.filename.split("_")[0]
-            recognition_result = recognizer.recognize_with_crop_no_full(
-                image_path=processed_path,
-                space_type=space_type,
-                model=vl_model,
-                upload_dir=UPLOAD_DIR,
-                task_id=task_id,
-            )
-        
+        recognition_result = recognizer.recognize_with_crop(
+            image_path=processed_path,
+            model=vl_model,
+            upload_dir=UPLOAD_DIR,
+            task_id=task_id,
+        )
     else:
         recognition_result = recognize_with_fallback(
             processed_path, vl_model,
@@ -1364,6 +1347,14 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
             "material_info": match_data["materials"],
         })
 
+    # 计算已匹配房间的面积（用于报价），total_area 仍为全部 CAD 面积（用于前端展示）
+    matched_area = sum(
+        float(row.get("area", 0) or 0)
+        for row in cad_rows
+        if space_material_map.get(row.get("space_name", ""), {}).get("source", "")
+    )
+    base_price = matched_area * unit_price
+
     material_diff = 0
     pricing_items = await db.get_pricing_items()
     price_index = {}
@@ -1432,8 +1423,11 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
         space_area = float(row.get("area", 0) or 0)
         wall_area = space_area * 2.5
         match_data = space_material_map.get(cad_name, {})
-        material = match_data.get("materials", {})
         source = match_data.get("source", "")
+        # 仅生成已匹配（AI自动或人工）房间的报价项，跳过未匹配的
+        if not source:
+            continue
+        material = match_data.get("materials", {})
         source_label = {"ai": "AI材质", "manual": "人工标注"}.get(source, "默认计价")
         source_note = {"ai": "自动匹配当前批次效果图", "manual": "使用人工标注材质"}.get(source, "未匹配当前批次效果图材质，使用默认材质")
         wall_mat_name = str(material.get("wall") or material.get("墙面材质") or "乳胶漆")
@@ -1509,6 +1503,39 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
         "manual_matched_count": sum(1 for m in fusion_matches if m["source"] == "manual"),
         "unmatched_count": sum(1 for m in fusion_matches if not m["source"]),
     }
+
+
+@app.get("/api/fusion/matches")
+async def get_fusion_matches():
+    """
+    获取当前批次数据融合匹配结果（只读，不重新计算、不写库）。
+    返回已匹配（AI自动 / 人工绑定）房间的融合详情和报价 items；
+    未匹配且无手工绑定的房间不输出，避免被默认材质污染报价。
+    入参：无
+    返回：融合匹配列表、报价明细 items、统计信息
+    """
+    from models.analysis_models import get_latest_cad_spaces, _latest_image_registry
+
+    cad_spaces = get_latest_cad_spaces()
+    if not cad_spaces:
+        return err(404, "暂无当前批次识别结果，请先在图纸分析页上传并分析", task_status=STATE_IDLE)
+
+    latest_batch_id = list(_latest_image_registry.keys())[-1] if _latest_image_registry else ""
+    image_results = _latest_image_registry.get(latest_batch_id, []) if latest_batch_id else []
+
+    cad_rows = _latest_cad_rows(cad_spaces)
+    image_rows = _latest_image_rows(image_results)
+
+    # 复用已有逻辑：build matches + items，但 persist=False，仅返回
+    try:
+        result = await _build_fusion_quote(cad_rows, image_rows, bindings=[], persist=False)
+        return ok({
+            **result,
+            "cad_spaces": [s.to_dict() for s in cad_spaces],
+            "image_results": [r.to_dict() for r in image_results],
+        }, task_status=STATE_IDLE)
+    except Exception as e:
+        return err(500, f"获取融合匹配结果失败: {str(e)}", task_status=STATE_IDLE)
 
 
 @app.post("/api/fusion/quote_latest")
