@@ -178,6 +178,38 @@ export const API = {
     }
   },
 
+  // === 标准报价表导出 ===
+  async exportStandardReportBlob(quoteId) {
+    try {
+      const response = await api.get(`/export_standard_report/${quoteId}`, {
+        responseType: 'blob',
+        timeout: 30000,
+      })
+      // 检查是否是错误响应（服务器返回JSON而非Excel）
+      const contentType = response.headers['content-type'] || ''
+      if (contentType.includes('application/json')) {
+        const text = await response.data.text()
+        let json
+        try { json = JSON.parse(text) } catch { json = { message: text } }
+        return { success: false, message: json.message || '导出失败' }
+      }
+      const disposition = response.headers['content-disposition'] || ''
+      let filename = `标准报价表_${quoteId}.xlsx`
+      let match = disposition.match(/filename\*=(?:UTF-8''|utf-8'')([^;\s]+)/i)
+      if (match) {
+        filename = decodeURIComponent(match[1])
+      } else {
+        match = disposition.match(/filename="([^"]*)"/i) || disposition.match(/filename=([^;\s]+)/i)
+        if (match) {
+          filename = match[1].replace(/^["']|["']$/g, '')
+        }
+      }
+      return { success: true, data: response.data, filename }
+    } catch (e) {
+      return { success: false, message: e.response?.data?.detail || e.message || '导出失败' }
+    }
+  },
+
   // === 历史记录 (接口5-7) ===
   async getHistory(page = 1, pageSize = 20) {
     try { const { data } = await api.get(`/history?page=${page}&page_size=${pageSize}`); return data }
