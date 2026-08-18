@@ -983,6 +983,7 @@ async def analyze_image(
     image_file: UploadFile = File(None),
     model: str = Form(""),
     crop_enabled: str = Form("true"),
+    full_enabled: str = Form("false"),
     drawing_id: int = Form(0),
     file_count: int = Form(1),
     batch_id: str = Form(""),
@@ -1030,8 +1031,12 @@ async def analyze_image(
     vl_api_token = model_info.get("api_token") if model_info else None
     vl_api_format = model_info.get("api_format") if model_info else None
 
+    # 是否启用图像裁剪
     use_crop = crop_enabled.lower() in ("true", "1", "yes")
-
+    
+    # 是否识别空间名称
+    recognize_full = full_enabled.lower() in ("true", "1", "yes")
+    
     if use_crop:
         from crop_recognizer import CropRecognizer
         recognizer = CropRecognizer(
@@ -1040,12 +1045,23 @@ async def analyze_image(
             api_token=vl_api_token,
             api_format=vl_api_format,
         )
-        recognition_result = recognizer.recognize_with_crop(
-            image_path=processed_path,
-            model=vl_model,
-            upload_dir=UPLOAD_DIR,
-            task_id=task_id,
-        )
+        
+        if recognize_full:
+            recognition_result = recognizer.recognize_with_crop(
+                image_path=processed_path,
+                model=vl_model,
+                upload_dir=UPLOAD_DIR,
+                task_id=task_id,
+            )
+        else:
+            space_type = image_file.filename.split("_")[0]
+            recognition_result = recognizer.recognize_with_crop_no_full(
+                image_path=processed_path,
+                space_type=space_type,
+                model=vl_model,
+                upload_dir=UPLOAD_DIR,
+                task_id=task_id,
+            )
     else:
         recognition_result = recognize_with_fallback(
             processed_path, vl_model,
