@@ -251,9 +251,9 @@
       </div>
 
       <!-- Tab 3: 分层明细 -->
-      <div v-show="activeTab === 'breakdown'">
+      <!-- <div v-show="activeTab === 'breakdown'">
         <SurfaceBreakdown />
-      </div>
+      </div> -->
 
       <!-- Tab 3: 历史记录 -->
       <div v-show="activeTab === 'history'">
@@ -279,9 +279,9 @@
       </div>
 
       <!-- Tab: 双源核对 -->
-      <div v-show="activeTab === 'comparison'">
+      <!-- <div v-show="activeTab === 'comparison'">
         <ComparisonPanel />
-      </div>
+      </div> -->
 
       <!-- Tab: 标准报价 -->
       <div v-show="activeTab === 'reports'">
@@ -374,12 +374,12 @@ import { canAnnotate, setAnnotationCapabilities } from './utils/annotationCapabi
 
 const tabs = [
   { key: 'home', label: '📐 图纸分析' },
-  { key: 'breakdown', label: '📋 分层明细' },
+  // { key: 'breakdown', label: '📋 分层明细' },
   { key: 'merge', label: '💰 融合报价' },
   { key: 'processes', label: '🔧 施工工序' },
   { key: 'reports', label: '📊 标准报价' },
   { key: 'history', label: '📋 历史记录' },
-  { key: 'comparison', label: '📋 双源核对' },
+  // { key: 'comparison', label: '📋 双源核对' },
   { key: 'settings', label: '⚙️ 定价配置' },
   { key: 'logs', label: '📝 操作日志' },
   { key: 'vision_test', label: '🔬 识别测试' },
