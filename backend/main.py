@@ -915,18 +915,9 @@ async def analyze_full(
         await db.update_drawing_parse(drawing_id, "completed", {"spaces_count": len(spaces), "total_area": total_area})
 
         # 写入持久类 CadSpace中（只保存最新一次识别结果）
-        from models.analysis_models import set_latest_cad_spaces, get_latest_cad_spaces, dict_to_cadspace, clear_image_results
-        previous_cad_spaces = get_latest_cad_spaces()
+        from models.analysis_models import set_latest_cad_spaces, dict_to_cadspace
         cad_spaces = [dict_to_cadspace(s) for s in spaces]
-        previous_signature = tuple(
-            sorted((s.space_name, round(float(s.area_sqm or 0), 2)) for s in (previous_cad_spaces or []))
-        )
-        current_signature = tuple(
-            sorted((s.space_name, round(float(s.area_sqm or 0), 2)) for s in cad_spaces)
-        )
         set_latest_cad_spaces(cad_spaces)
-        if previous_signature and previous_signature != current_signature:
-            clear_image_results()
     
         result = {
             "drawing_id": drawing_id,
@@ -1141,16 +1132,10 @@ async def analyze_image(
     # 按 batch_id 分组保存（批次追踪）
     batch_key = batch_id if batch_id else f"batch_{file_count}"
     
-    # 新批次开始时把上一批当前效果图带入新批次，支持“先识别一批，再继续添加识别”。
-    # /api/analyze/latest 仍只读取 latest batch，但 latest batch 内包含当前 CAD 流程下累计识别图。
+    # 新批次开始时清空旧数据，只保留最新批次
     from models.analysis_models import _latest_image_registry
     if not _latest_image_registry or batch_key not in _latest_image_registry:
-        previous_results = []
-        for batch_results in _latest_image_registry.values():
-            previous_results.extend(batch_results)
         clear_image_results()
-        if previous_results:
-            set_latest_image_result(batch_key, previous_results)
     append_image_result(batch_key, image_result)
     
     logger.info("📷 已保存 ImageResult: id=%s, batch_id=%s, file_count=%d", 

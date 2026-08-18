@@ -122,6 +122,8 @@ const queueRunning = ref(false)
 const currentProcessing = ref(null)
 const queueError = ref('')
 const results = ref([])          // {success, filename, preview, ...}
+const currentBatchId = ref(null)  // 持久化批次ID
+
 
 // 图片放大预览
 const lightbox = ref({ show: false, url: '' })
@@ -231,6 +233,7 @@ function clearAll() {
   results.value = []
   queueError.value = ''
   currentProcessing.value = null
+  currentBatchId.value = null  // 清空时重置批次ID
   emitPendingUpdate()
   emitProgressUpdate()
 }
@@ -245,8 +248,10 @@ async function startQueue(drawingIdOverride = null) {
 
   const files = [...pendingFiles.value]
   const effectiveDrawingId = Number(drawingIdOverride ?? props.drawingId) || 0
-  // 生成唯一批次ID
-  const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`  
+  
+  // 复用现有批次ID，如果没有则创建新的
+  const batchId = currentBatchId.value || 
+                  `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
   for (let i = 0; i < files.length; i++) {
     const item = files[i]
@@ -260,7 +265,7 @@ async function startQueue(drawingIdOverride = null) {
         model: props.model,
         fullEnabled: props.fullEnabled,
         fileCount: files.length, // 该批次效果图数量
-        batchId: batchId,  // 传递批次ID
+        batchId: batchId,  // 使用持久化批次ID
       })
       results.value.push({
         success: res.success,
@@ -293,7 +298,9 @@ async function startQueue(drawingIdOverride = null) {
     }
   }
 
-  currentProcessing.value = null
+  // 保存批次ID供下次使用
+  currentBatchId.value = batchId
+
   queueRunning.value = false
   emitProgressUpdate()
   emit('results-update', results.value)
