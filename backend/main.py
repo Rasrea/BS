@@ -2578,6 +2578,39 @@ async def download_excel(quote_id: int):
     return FileResponse(filepath, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ─────────────────── 接口：标准报价表导出 ───────────────────
+
+@app.get("/api/export_standard_report/{quote_id}")
+async def export_standard_report(quote_id: int):
+    """
+    导出标准报价表Excel（3个Sheet：综合总表、空间分项、工序明细）
+    数据从标准报价接口获取，不直接访问数据库
+    返回 FileResponse（Excel二进制），供浏览器直接下载
+    """
+    try:
+        # 通过 router 获取标准报价数据
+        report_handler = _find_endpoint("/api/quote/{quote_id}/standard_report")
+        if not report_handler:
+            return err(500, "内部错误：standard_report 端点未找到")
+
+        report_resp = await report_handler(quote_id)
+        if not report_resp.get("success"):
+            return err(404, "报价记录不存在")
+
+        report_data = report_resp["data"]
+
+        # 导出Excel
+        from excel_export import export_standard_report_excel
+        filepath = export_standard_report_excel(report_data)
+
+        filename = Path(filepath).name
+        return FileResponse(filepath, filename=filename, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return err(500, f"导出失败: {str(e)}")
+
+
 # ─────────────────── 接口：历史记录 ───────────────────
 
 @app.get("/api/history")
@@ -3868,6 +3901,15 @@ async def get_comparison_table(drawing_id: int):
 
 # ─────────────────── 接口：标准报价表（综合/分项/工序） ───────────────────
 
+
+def _find_endpoint(path: str):
+    """通过路径字符串在 app.router 中查找对应的 endpoint handler"""
+    for route in app.router.routes:
+        if hasattr(route, "path") and route.path == path:
+            return getattr(route, "endpoint", None)
+    return None
+
+
 @app.get("/api/quote/{quote_id}/standard_report")
 async def get_standard_report(quote_id: int):
     """
@@ -3875,11 +3917,27 @@ async def get_standard_report(quote_id: int):
     1. 综合报价总表（项目概况+工种汇总）
     2. 空间分项明细表（每个空间逐项）
     3. 工序费用明细表（按工序聚合）
+
+    注：数据从已有 API 端口读取（history_detail + list_processes），
+       不直接访问数据库，保持各模块间通过接口通信的架构原则。
     """
     try:
-        quote = await db.get_quote(quote_id)
-        if not quote:
+        # ── 1. 从 /api/history/{id} 端口读取报价详情和CAD数据 ──
+        history_handler = _find_endpoint("/api/history/{task_id}")
+        if not history_handler:
+            return err(500, "内部错误：history_detail 端点未找到")
+        history_resp = await history_handler(quote_id)
+        if not history_resp.get("success"):
             return err(404, "报价记录不存在")
+        quote = history_resp["data"]["quote"]
+        cad_rows = history_resp["data"]["cad_data"]
+
+        # ── 2. 从 /api/processes 端口读取工序列表 ──
+        procs_handler = _find_endpoint("/api/processes")
+        if not procs_handler:
+            return err(500, "内部错误：list_processes 端点未找到")
+        procs_resp = await procs_handler()
+        sys_procs = procs_resp["data"]["processes"]
 
         items = quote.get("quote_detail_json", [])
         if isinstance(items, str):
@@ -3937,10 +3995,6 @@ async def get_standard_report(quote_id: int):
         ]
 
         # ─── 3. 工序费用明细表 ───
-        cad_result_id = quote.get("cad_result_id", 0)
-        cad_rows = await db.get_cad_results(cad_result_id) if cad_result_id else []
-        # 获取工序列表
-        sys_procs = await db.get_processes()
         proc_details = []
         for proc in sys_procs:
             pname = proc["name"]

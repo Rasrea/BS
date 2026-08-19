@@ -18,6 +18,14 @@
                   @click="loadReport">
             {{ loading ? '加载中...' : '🔄 加载报表' }}
           </button>
+          <button v-if="report" class="btn-secondary text-xs" :disabled="exporting"
+                  @click="doExportStandardReport">
+            <svg v-if="exporting" class="animate-spin w-3 h-3 inline mr-1" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            {{ exporting ? '导出中...' : '📥 导出Excel' }}
+          </button>
         </div>
       </div>
     </div>
@@ -84,7 +92,7 @@
               <td class="py-2 text-gray-800">合计</td>
               <td class="py-2 text-right text-gray-600">{{ totalSpaces }}</td>
               <td class="py-2 text-right text-gray-600">{{ totalItems }}</td>
-              <td class="py-2 text-right text-primary-700">¥{{ fmt(report.total_price) }}</td>
+              <td class="py-2 text-right text-primary-700">¥{{ fmt(totalSummarySubtotal) }}</td>
             </tr>
           </tbody>
         </table>
@@ -151,7 +159,7 @@
               <td class="px-3 py-2 text-right text-gray-600">{{ totalProcessSpaces }}</td>
               <td class="px-3 py-2 text-right text-blue-700">¥{{ fmt(totalMaterialCost) }}</td>
               <td class="px-3 py-2 text-right text-orange-700">¥{{ fmt(totalLaborCost) }}</td>
-              <td class="px-3 py-2 text-right text-green-700">¥{{ fmt(report.total_price) }}</td>
+              <td class="px-3 py-2 text-right text-green-700">¥{{ fmt(totalProcessSubtotal) }}</td>
             </tr>
           </tbody>
         </table>
@@ -172,6 +180,7 @@ const selectedQuoteId = ref('')
 const loading = ref(false)
 const report = ref(null)
 const activeView = ref('summary')
+const exporting = ref(false)
 
 const viewTabs = [
   { key: 'summary', label: '📋 综合报价总表' },
@@ -190,6 +199,8 @@ const totalProcessSpaces = computed(() => {
 })
 const totalMaterialCost = computed(() => report.value?.process_details?.reduce((s, p) => s + p.material_cost, 0) || 0)
 const totalLaborCost = computed(() => report.value?.process_details?.reduce((s, p) => s + p.labor_cost, 0) || 0)
+const totalProcessSubtotal = computed(() => report.value?.process_details?.reduce((s, p) => s + p.subtotal, 0) || 0)
+const totalSummarySubtotal = computed(() => report.value?.process_summary?.reduce((s, p) => s + p.subtotal, 0) || 0)
 
 /**
  * 加载报价列表，支持多种响应结构（主路径 + 回退）
@@ -245,5 +256,30 @@ async function loadReport() {
     alert(res.message || '加载失败')
   }
   loading.value = false
+}
+
+async function doExportStandardReport() {
+  if (!selectedQuoteId.value) return
+  exporting.value = true
+  try {
+    const res = await API.exportStandardReportBlob(selectedQuoteId.value)
+    if (res.success) {
+      // 触发浏览器下载
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.filename || `标准报价表_${selectedQuoteId.value}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } else {
+      alert('导出失败: ' + (res.message || '未知错误'))
+    }
+  } catch (e) {
+    alert('导出失败: ' + (e.message || '未知错误'))
+  } finally {
+    exporting.value = false
+  }
 }
 </script>

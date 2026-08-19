@@ -4,6 +4,7 @@ Excel 导出模块 - 生成4Sheet精简版家装报价Excel
 import json
 import os
 from pathlib import Path
+from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
@@ -619,3 +620,285 @@ def _find_pricing_item(item_map: dict, surface_type: str, material_name: str) ->
             if "地板" in material_name and "地板" in iname:
                 return item
     return items[0]
+
+
+# ─────────────────── 标准报价表导出 ───────────────────
+
+
+def export_standard_report_excel(report_data: dict, output_dir: str = None) -> str:
+    """
+    导出标准报价表Excel（3个Sheet）
+    
+    Sheet1: 综合报价总表
+    Sheet2: 空间分项明细表
+    Sheet3: 工序费用明细表
+    
+    参数:
+        report_data: standard_report API 返回的数据 dict
+        output_dir: 输出目录，默认 ~/exports/
+    
+    返回:
+        文件路径
+    """
+    if output_dir is None:
+        output_dir = str(Path.home() / "exports")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    project_name = report_data.get("project_name", "标准报价表")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"标准报价表_{project_name}_{timestamp}.xlsx"
+    filepath = os.path.join(output_dir, filename)
+
+    wb = Workbook()
+
+    # ── Sheet1: 综合报价总表 ──
+    ws1 = wb.active
+    ws1.title = "综合报价总表"
+    _build_summary_sheet_from_report(ws1, report_data)
+
+    # ── Sheet2: 空间分项明细表 ──
+    ws2 = wb.create_sheet("空间分项明细")
+    _build_space_detail_sheet(ws2, report_data)
+
+    # ── Sheet3: 工序费用明细表 ──
+    ws3 = wb.create_sheet("工序费用明细")
+    _build_process_detail_sheet(ws3, report_data)
+
+    wb.save(filepath)
+    return filepath
+
+
+def _build_summary_sheet_from_report(ws, data: dict):
+    """Sheet1: 综合报价总表 - 项目概况 + 工种汇总"""
+    # 标题
+    ws.merge_cells("A1:E1")
+    ws["A1"] = f"📋 {data.get('project_name', '标准报价表')}"
+    ws["A1"].font = TITLE_FONT
+    ws["A1"].alignment = CENTER
+
+    # 项目概况
+    ws.merge_cells("A2:E2")
+    ws["A2"] = f"报价编号: #{data.get('quote_id', '')}  |  生成时间: {data.get('create_time', '')}"
+    ws["A2"].font = Font(name="微软雅黑", size=9, color="666666")
+    ws["A2"].alignment = CENTER
+
+    # 费用卡片区域
+    row = 4
+    headers = ["费用项目", "金额(元)"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=row, column=col, value=h)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = THIN_BORDER
+
+    fee_items = [
+        ("基础报价", data.get("base_price", 0)),
+        ("材质差价", data.get("material_diff", 0)),
+        ("损耗", data.get("loss_price", 0)),
+        ("管理费", data.get("manage_fee", 0)),
+        ("税费", data.get("tax_fee", 0)),
+        ("最终报价", data.get("total_price", 0)),
+    ]
+    row += 1
+    for name, amount in fee_items:
+        ws.cell(row=row, column=1, value=name).font = NORMAL_FONT
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        ws.cell(row=row, column=1).alignment = LEFT
+        c = ws.cell(row=row, column=2, value=round(amount, 2))
+        c.font = MONEY_FONT if name == "最终报价" else NORMAL_FONT
+        c.border = THIN_BORDER
+        c.alignment = RIGHT
+        row += 1
+
+    # 设置列宽
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 14
+    row += 2
+    ws.merge_cells(f"A{row}:E{row}")
+    ws.cell(row=row, column=1, value="🔧 工种费用汇总").font = Font(name="微软雅黑", size=12, bold=True)
+    row += 1
+
+    summary_headers = ["工序", "空间数", "项目数", "金额(元)"]
+    for col, h in enumerate(summary_headers, 1):
+        cell = ws.cell(row=row, column=col, value=h)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = THIN_BORDER
+    row += 1
+
+    process_summary = data.get("process_summary", [])
+    for p in process_summary:
+        ws.cell(row=row, column=1, value=p.get("process_name", "")).font = NORMAL_FONT
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        ws.cell(row=row, column=1).alignment = LEFT
+        ws.cell(row=row, column=2, value=p.get("space_count", 0)).font = NORMAL_FONT
+        ws.cell(row=row, column=2).border = THIN_BORDER
+        ws.cell(row=row, column=2).alignment = CENTER
+        ws.cell(row=row, column=3, value=p.get("item_count", 0)).font = NORMAL_FONT
+        ws.cell(row=row, column=3).border = THIN_BORDER
+        ws.cell(row=row, column=3).alignment = CENTER
+        c = ws.cell(row=row, column=4, value=round(p.get("subtotal", 0), 2))
+        c.font = NORMAL_FONT
+        c.border = THIN_BORDER
+        c.alignment = RIGHT
+        row += 1
+
+    # 合计行
+    ws.cell(row=row, column=1, value="合计").font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row, column=1).border = THIN_BORDER
+    ws.cell(row=row, column=1).alignment = LEFT
+    total_spaces = sum(p.get("space_count", 0) for p in process_summary)
+    total_items = sum(p.get("item_count", 0) for p in process_summary)
+    total_amount = sum(p.get("subtotal", 0) for p in process_summary)
+    ws.cell(row=row, column=2, value=total_spaces).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row, column=2).border = THIN_BORDER
+    ws.cell(row=row, column=2).alignment = CENTER
+    ws.cell(row=row, column=3, value=total_items).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row, column=3).border = THIN_BORDER
+    ws.cell(row=row, column=3).alignment = CENTER
+    c = ws.cell(row=row, column=4, value=round(total_amount, 2))
+    c.font = Font(name="微软雅黑", size=11, bold=True, color="C00000")
+    c.border = THIN_BORDER
+    c.alignment = RIGHT
+
+    # 设置列宽
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 10
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 14
+
+
+def _build_space_detail_sheet(ws, data: dict):
+    """Sheet2: 空间分项明细表"""
+    ws.merge_cells("A1:E1")
+    ws["A1"] = "🏠 空间分项明细表"
+    ws["A1"].font = TITLE_FONT
+    ws["A1"].alignment = CENTER
+
+    headers = ["空间", "项目名称", "数量", "单位", "小计(元)"]
+    widths = [14, 20, 10, 8, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = THIN_BORDER
+
+    space_details = data.get("space_details", [])
+    row = 4
+    for sd in space_details:
+        space_name = sd.get("space_name", "")
+        space_subtotal = sd.get("space_subtotal", 0)
+        items = sd.get("items", [])
+
+        for i, item in enumerate(items):
+            ws.cell(row=row, column=1, value=space_name if i == 0 else "").font = NORMAL_FONT
+            ws.cell(row=row, column=1).border = THIN_BORDER
+            ws.cell(row=row, column=1).alignment = LEFT
+            ws.cell(row=row, column=2, value=item.get("project_name", "")).font = NORMAL_FONT
+            ws.cell(row=row, column=2).border = THIN_BORDER
+            ws.cell(row=row, column=2).alignment = LEFT
+            ws.cell(row=row, column=3, value=item.get("quantity", 0)).font = NORMAL_FONT
+            ws.cell(row=row, column=3).border = THIN_BORDER
+            ws.cell(row=row, column=3).alignment = CENTER
+            ws.cell(row=row, column=4, value=item.get("unit", "")).font = NORMAL_FONT
+            ws.cell(row=row, column=4).border = THIN_BORDER
+            ws.cell(row=row, column=4).alignment = CENTER
+            c = ws.cell(row=row, column=5, value=round(item.get("subtotal", 0), 2))
+            c.font = NORMAL_FONT
+            c.border = THIN_BORDER
+            c.alignment = RIGHT
+            row += 1
+
+        # 空间小计行
+        ws.cell(row=row, column=1, value=f"{space_name} 小计").font = Font(name="微软雅黑", size=10, bold=True)
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        ws.cell(row=row, column=1).alignment = LEFT
+        # 合并 B:D，但保留边框
+        for c in range(2, 5):
+            ws.cell(row=row, column=c).border = THIN_BORDER
+        ws.merge_cells(f"B{row}:D{row}")
+        c = ws.cell(row=row, column=5, value=round(space_subtotal, 2))
+        c.font = MONEY_FONT
+        c.border = THIN_BORDER
+        c.alignment = RIGHT
+        row += 1
+
+    # 总计行
+    ws.merge_cells(f"A{row}:D{row}")
+    total_cell = ws.cell(row=row, column=1, value="总计")
+    total_cell.font = Font(name="微软雅黑", size=12, bold=True, color="C00000")
+    total_cell.border = THIN_BORDER
+    total_cell.alignment = LEFT
+    # 设置整行边框
+    for c in range(1, 6):
+        ws.cell(row=row, column=c).border = THIN_BORDER
+    total = sum(sd.get("space_subtotal", 0) for sd in space_details)
+    total_val = ws.cell(row=row, column=5, value=round(total, 2))
+    total_val.font = Font(name="微软雅黑", size=12, bold=True, color="C00000")
+    total_val.alignment = RIGHT
+    total_val.border = THIN_BORDER
+
+
+def _build_process_detail_sheet(ws, data: dict):
+    """Sheet3: 工序费用明细表"""
+    ws.merge_cells("A1:F1")
+    ws["A1"] = "🔧 工序费用明细表"
+    ws["A1"].font = TITLE_FONT
+
+    headers = ["工序", "涉及空间", "空间数", "材料费", "人工费", "合计"]
+    widths = [14, 24, 10, 14, 14, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = CENTER
+        cell.border = THIN_BORDER
+
+    process_details = data.get("process_details", [])
+    row = 4
+    total_material = 0
+    total_labor = 0
+    total_subtotal = 0
+
+    for p in process_details:
+        ws.cell(row=row, column=1, value=p.get("process_name", "")).font = NORMAL_FONT
+        ws.cell(row=row, column=1).border = THIN_BORDER
+        ws.cell(row=row, column=2, value=", ".join(p.get("spaces", []))).font = NORMAL_FONT
+        ws.cell(row=row, column=2).border = THIN_BORDER
+        ws.cell(row=row, column=3, value=p.get("space_count", 0)).font = NORMAL_FONT
+        ws.cell(row=row, column=3).border = THIN_BORDER
+        mat = round(p.get("material_cost", 0), 2)
+        lab = round(p.get("labor_cost", 0), 2)
+        sub = round(p.get("subtotal", 0), 2)
+        total_material += mat
+        total_labor += lab
+        total_subtotal += sub
+        for ci, val in [(4, mat), (5, lab), (6, sub)]:
+            c = ws.cell(row=row, column=ci, value=val)
+            c.font = NORMAL_FONT
+            c.border = THIN_BORDER
+            c.alignment = RIGHT
+        row += 1
+
+    # 合计行
+    ws.cell(row=row, column=1, value="合计").font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row, column=1).border = THIN_BORDER
+    total_spaces = len(set().union(*[set(p.get("spaces", [])) for p in process_details])) if process_details else 0
+    ws.cell(row=row, column=2, value="").font = NORMAL_FONT
+    ws.cell(row=row, column=2).border = THIN_BORDER
+    ws.cell(row=row, column=3, value=total_spaces).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row, column=3).border = THIN_BORDER
+    for ci, val in [(4, total_material), (5, total_labor), (6, total_subtotal)]:
+        c = ws.cell(row=row, column=ci, value=round(val, 2))
+        c.font = Font(name="微软雅黑", size=11, bold=True, color="C00000")
+        c.border = THIN_BORDER
+        c.alignment = RIGHT
