@@ -1421,6 +1421,7 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
     category_process_map = {
         "墙面工程": "油漆工程",
         "地面工程": "瓦工工程",
+        "吊顶工程": "木工工程",
     }
     sys_procs = await db.get_processes()
     proc_name_to_id = {p["name"]: p["id"] for p in sys_procs}
@@ -1439,9 +1440,12 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
         source_note = {"ai": "自动匹配当前批次效果图", "manual": "使用人工标注材质"}.get(source, "未匹配当前批次效果图材质，使用默认材质")
         wall_mat_name = str(material.get("wall") or material.get("墙面材质") or "乳胶漆")
         floor_mat_name = str(material.get("floor") or material.get("地面材质") or "地砖")
+        ceiling_mat_name = str(material.get("ceiling") or material.get("顶面材质") or "石膏板吊顶")
+        ceiling_area = space_area * 0.8  # 吊顶面积 = 地面面积 × 0.8
         for category, material_name, quantity, default_material, default_labor, suffix in [
             ("墙面工程", wall_mat_name, wall_area, 18, 22, "墙面"),
             ("地面工程", floor_mat_name, space_area, 45, 35, "铺贴"),
+            ("吊顶工程", ceiling_mat_name, ceiling_area, 60, 35, "吊顶"),
         ]:
             price_match = _auto_match_price(category, material_name)
             material_price = price_match["material"] if price_match else default_material
@@ -1470,7 +1474,7 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
 
     items = sorted(items, key=lambda x: (
         x.get("space_name", ""),
-        {"墙面工程": 0, "地面工程": 1}.get(x.get("category", ""), 9),
+        {"墙面工程": 0, "地面工程": 1, "吊顶工程": 2}.get(x.get("category", ""), 9),
     ))
 
     trace = {
