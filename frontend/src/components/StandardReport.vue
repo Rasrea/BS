@@ -8,17 +8,17 @@
           <p class="text-xs text-gray-500">综合汇总 · 空间分项 · 工序明细 三表合一</p>
         </div>
         <div class="flex items-center gap-3">
-          <select v-model="selectedQuoteId" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
+          <!-- <select v-model="selectedQuoteId" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
             <option value="">-- 选择报价 --</option>
             <option v-for="q in quotes" :key="q.id" :value="q.id">
               #{{ q.id }} {{ q.project_name }} — ¥{{ Number(q.final_price || 0).toLocaleString() }}
             </option>
-          </select>
-          <button class="btn-primary text-xs" :disabled="!selectedQuoteId || loading"
+          </select> -->
+          <!-- <button class="btn-primary text-xs" :disabled="!selectedQuoteId || loading"
                   @click="loadReport">
             {{ loading ? '加载中...' : '🔄 加载报表' }}
-          </button>
-          <button v-if="report" class="btn-secondary text-xs" :disabled="exporting"
+          </button> -->
+          <button v-if="report" class="btn-primary text-xs" :disabled="exporting"
                   @click="doExportStandardReport">
             <svg v-if="exporting" class="animate-spin w-3 h-3 inline mr-1" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
