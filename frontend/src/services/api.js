@@ -233,6 +233,10 @@ export const API = {
     try { const { data } = await api.delete(`/history/${quoteId}`); return data }
     catch (e) { return handleError(e) }
   },
+  async clearUploadFiles() {
+    try { const { data } = await api.post('/upload/clear', {}, { timeout: 30000 }); return data }
+    catch (e) { return handleError(e) }
+  },
 
   // === 操作日志 ===
   async getLogs(page = 1, pageSize = 50) {
