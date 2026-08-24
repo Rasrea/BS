@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeo
 
 import data
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -958,8 +958,15 @@ async def analyze_full(
 
 
 @app.post("/api/upload/clear")
-async def upload_clear():
+async def upload_clear(request: Request):
     """清理预览、识别和测试流程产生的临时上传文件。"""
+    before_paths = sorted(path.name for path in UPLOAD_DIR.iterdir()) if UPLOAD_DIR.exists() else []
+    logger.warning(
+        "upload_clear called: client=%s user_agent=%r files_before=%s",
+        request.client.host if request.client else "unknown",
+        request.headers.get("user-agent", ""),
+        before_paths,
+    )
     if task_state.state != STATE_IDLE:
         return err(409, f"\u7cfb\u7edf\u5f53\u524d\u6709\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff08{task_state.state}\uff09\uff0c\u8bf7\u7b49\u5f85\u5b8c\u6210\u540e\u518d\u64cd\u4f5c")
 
@@ -979,6 +986,12 @@ async def upload_clear():
         if path.suffix.lower() in temporary_suffixes or path.name.endswith(".measurement.json.gz"):
             cleanup_upload_work_paths(path)
             deleted += 1
+    after_paths = sorted(path.name for path in UPLOAD_DIR.iterdir()) if UPLOAD_DIR.exists() else []
+    logger.warning(
+        "upload_clear finished: deleted_count=%d files_after=%s",
+        deleted,
+        after_paths,
+    )
     return ok({"deleted_count": deleted})
 
 
@@ -1075,13 +1088,6 @@ async def analyze_image(
             api_format=vl_api_format,
         )
         recognition_result["_crop_mode"] = "disabled"
-
-    # 清理临时文件
-    try:
-        os.remove(save_path)
-        os.remove(processed_path)
-    except Exception:
-        pass
 
     if not recognition_result:
         return err(500, "AI识别无结果", task_status=STATE_IDLE)
@@ -1744,9 +1750,8 @@ async def vision_test(
         logger.info("vision_test response: expected=%s, predicted=%s", expected, predicted)
         return ok(result)
     finally:
-        # 测试图像和裁剪调试文件均为临时文件，不得在运行失败后继续留存。
-        cleanup_upload_work_paths(save_path, processed_path)
-        cleanup_upload_task_artifacts(task_id)
+        # Retain vision-test uploads for later inspection and manual cleanup.
+        pass
 
 @app.post("/api/analyze_pdf")
 async def analyze_pdf(pdf_file: UploadFile = File(None)):
