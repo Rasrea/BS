@@ -345,7 +345,7 @@
     <!-- Footer -->
     <footer class="mt-8 py-4 border-t border-gray-200">
       <div class="max-w-7xl mx-auto px-4 text-center text-xs text-gray-400">
-        家装智能自动报价系统 · Demo v2.1 · 后端状态: {{ sysStatusText }}
+        家装智能自动报价系统 · v2.5 · 后端状态: {{ sysStatusText }}
       </div>
     </footer>
   </div>
@@ -605,7 +605,7 @@ const statusText = computed(() => {
 const sysStatusText = computed(() => {
   if (!sysStatus.value) return '未知'
   const t = sysStatus.value
-  return `${t.task_state} | LLaVA: ${t.llava_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
+  return `${t.task_state} | Qwen: ${t.qwen_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
 })
 
 // 通知后端清理当前会话产生的上传临时文件；失败不打断用户操作。
