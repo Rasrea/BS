@@ -45,17 +45,17 @@
             <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
             <div class="flex items-center gap-2">
               <input v-model.number="item.editValue" type="number" step="0.01"
-                     @input="item.editValue = $event.target.valueAsNumber"
+                     @input="item.editValue = $event.target.valueAsNumber; item.dirty = true"
                      class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
               <span class="text-xs text-gray-400">{{ item.suffix }}</span>
-              <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
+              <button v-if="item.dirty" @click="saveOne(item.key, item.editValue, item)"
                       class="text-xs px-2 py-1 bg-primary-50 text-primary-700 rounded hover:bg-primary-100">
                 保存
               </button>
             </div>
             <input v-if="item.suffix === '%'" type="range" min="0" max="30" step="0.5"
                    v-model.number="item.editValue"
-                   @input="item.editValue = $event.target.valueAsNumber"
+                   @input="item.editValue = $event.target.valueAsNumber; item.dirty = true"
                    class="w-full mt-1 accent-primary-600" />
           </div>
         </div>
@@ -73,16 +73,17 @@
           <label class="text-xs text-gray-500 block mb-1">{{ item.desc }}</label>
           <div class="flex items-center gap-2">
             <input v-model.number="item.editValue" type="number" step="0.01" min="0" max="1"
-                   @input="item.editValue = Math.min(1, Math.max(0, $event.target.valueAsNumber || 0))"
+                   @input="item.editValue = Math.min(1, Math.max(0, $event.target.valueAsNumber || 0)); item.dirty = true"
                    class="w-20 border border-gray-300 rounded px-2 py-1 text-sm text-right" />
               <span class="text-xs text-gray-400">{{ (item.editValue * 100).toFixed(0) }}%</span>
-              <button v-if="item.dirty" @click="saveOne(item.key, item.editValue)"
+              <button v-if="item.dirty" @click="saveOne(item.key, item.editValue, item)"
                       class="text-xs px-2 py-1 bg-primary-50 text-primary-700 rounded hover:bg-primary-100">
                 保存
               </button>
             </div>
             <input type="range" min="0" max="1" step="0.05"
                    v-model.number="item.editValue"
+                   @input="item.dirty = true"
                    class="w-full mt-1 accent-primary-600" />
         </div>
       </div>
@@ -334,10 +335,10 @@ const groupedSettings = computed(() => {
     other: { label: '其他', items: [] },
   }
   for (const s of allSettings.value) {
-    const item = { ...s, editValue: parseFloat(s.value) || 0, dirty: false, suffix: '' }
+    const item = s
+    item.suffix = ''
     if (['manage_fee_rate', 'tax_rate', 'loss_rate'].includes(s.key)) {
       item.suffix = '%'
-      item.editValue = (parseFloat(s.value) || 0) * 100
       groups.rates.items.push(item)
     } else if (['wall_area_factor', 'ceiling_factor', 'perimeter_factor'].includes(s.key)) {
       groups.area.items.push(item)
@@ -361,14 +362,8 @@ const deductionItems = computed(() => {
   return allSettings.value
     .filter(s => s.key.startsWith('deduct_') || s.key.startsWith('niche_') || s.key.startsWith('pillar_') || s.key.startsWith('bay_window_'))
     .map(s => {
-      const val = parseFloat(s.value) || 0
-      const snapped = Math.round(val / 0.05) * 0.05
-      return {
-        ...s,
-        editValue: snapped,
-        dirty: Math.abs(snapped - val) > 0.001,
-        desc: s.description?.replace(/_/g, ' ') || s.key,
-      }
+      s.desc = s.description?.replace(/_/g, ' ') || s.key
+      return s
     })
 })
 
@@ -403,7 +398,17 @@ async function loadPricing() {
     }
     for (const [key, value] of Object.entries(res.data)) {
       if (typeof value === 'string' || typeof value === 'number') {
-        arr.push({ key, value: String(value), description: descMap[key] || key })
+        const numericValue = parseFloat(value) || 0
+        arr.push({
+          key,
+          value: String(value),
+          description: descMap[key] || key,
+          editValue: ['manage_fee_rate', 'tax_rate', 'loss_rate'].includes(key)
+            ? numericValue * 100
+            : numericValue,
+          dirty: false,
+          suffix: '',
+        })
       }
     }
     allSettings.value = arr
@@ -411,11 +416,12 @@ async function loadPricing() {
   pricingLoaded.value = true
 }
 
-async function saveOne(key, val) {
+async function saveOne(key, val, item = null) {
   const displayVal = ['manage_fee_rate', 'tax_rate', 'loss_rate'].includes(key)
     ? (val / 100).toString()
     : String(val)
   const res = await API.updatePricing(key, displayVal)
+  if (item) item.dirty = false
   if (res.success) {
     const idx = allSettings.value.findIndex(s => s.key === key)
     if (idx >= 0) {
