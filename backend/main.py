@@ -611,6 +611,19 @@ async def prepare_dxf_measurement(dxf_file: UploadFile = File(...)):
     return await prepare_measurement_file(dxf_file)
 
 
+@app.post("/api/measurement/{drawing_id}/cleanup")
+async def cleanup_measurement(drawing_id: str, source_format: str = Query("dxf")):
+    """Remove temporary files belonging to one manual-measurement drawing."""
+    capability = annotation_capability(source_format)
+    cleanup_measurement_work_files(drawing_id, capability["format"])
+    return ok({"drawing_id": drawing_id, "source_format": capability["format"]})
+
+
+@app.post("/api/dxf/measurement/{drawing_id}/cleanup", deprecated=True)
+async def cleanup_dxf_measurement(drawing_id: str, source_format: str = Query("dxf")):
+    return await cleanup_measurement(drawing_id, source_format)
+
+
 async def load_measurement_view(drawing_id: str, view_id: str):
     """
     按需加载已检测到的单个图纸区域（视图）。
