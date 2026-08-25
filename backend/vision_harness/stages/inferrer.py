@@ -304,45 +304,73 @@ class ModelInferrer:
 
 def extract_json(raw_text: str) -> dict | None:
     """
-    从模型返回文本中健壮提取JSON。
+    从模型返回文本中提取 JSON。
 
-    5层降级解析策略：
-    1. 直接解析
-    2. 正则提取 {…} 再解析
-    3. 修复末尾逗号
-    4. 单引号→双引号
-    5. 组合修复
+    支持：
+    1. 纯 JSON
+    2. Markdown ```json``` 包裹
+    3. JSON 前后存在自然语言
+    4. 尾逗号
+    5. 单引号
+    6. Markdown 转义下划线
     """
+
     if not raw_text:
         return None
 
     text = raw_text.strip()
-    # 去掉 ```json / ``` 包裹
-    text = re.sub(r'^```(?:json)?\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
-    text = text.strip()
 
-    for attempt in [
-        lambda t: json.loads(t),
-        lambda t: json.loads(re.search(r'\{[\s\S]*\}', t).group()),
-        lambda t: json.loads(
-            re.sub(r',\s*}', '}', re.search(r'\{[\s\S]*\}', t).group())
-        ),
-        lambda t: json.loads(
-            re.sub(r"'", '"', re.search(r'\{[\s\S]*\}', t).group())
-        ),
-        lambda t: json.loads(
-            re.sub(r',\s*}', '}',
-                   re.sub(r"'", '"',
-                          re.search(r'\{[\s\S]*\}', t).group()))
-        ),
-    ]:
+    # 1. 去掉 Markdown 代码块
+    text = re.sub(r"```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```", "", text)
+
+    # 2. 提取最外层 JSON
+    match = re.search(r"\{[\s\S]*\}", text)
+
+    if not match:
+        return None
+
+    json_text = match.group(0).strip()
+
+    # 3. 处理 Markdown 中的 \_ 
+    # "wall\_material" -> "wall_material"
+    json_text = json_text.replace(r"\_", "_")
+
+    # 4. 处理多余的一层 {}
+    # {{"wall_material": "乳胶漆"}}
+    while (
+        json_text.startswith("{{")
+        and json_text.endswith("}}")
+    ):
+        inner = json_text[1:-1].strip()
+
         try:
-            return attempt(text)
-        except (json.JSONDecodeError, AttributeError):
-            continue
-    return None
+            return json.loads(inner)
+        except json.JSONDecodeError:
+            json_text = inner
 
+    # 5. 正常 JSON
+    try:
+        return json.loads(json_text)
+    except json.JSONDecodeError:
+        pass
+
+    # 6. 修复末尾逗号
+    fixed = re.sub(r",\s*}", "}", json_text)
+    fixed = re.sub(r",\s*]", "]", fixed)
+
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # 7. 单引号转双引号
+    fixed = re.sub(r"'", '"', fixed)
+
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        return None
 
 def parse_single_field(raw_text: str, field: str) -> str:
     """从模型返回中提取单字段值"""
