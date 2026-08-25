@@ -4,9 +4,15 @@
       <h3 class="text-base font-semibold text-gray-800 flex items-center gap-2">
         <span>📋</span> 报价历史记录
       </h3>
-      <button @click="refresh" class="btn-secondary text-sm !px-3 !py-1.5">
-        🔄 刷新
-      </button>
+      <div class="flex items-center gap-2">
+        <button @click="refresh" class="btn-secondary text-sm !px-3 !py-1.5">
+          🔄 刷新
+        </button>
+        <button @click="showClearUploadsDialog = true"
+                class="btn-secondary text-sm !px-3 !py-1.5 !text-amber-700 !border-amber-200 hover:!bg-amber-50 hover:!border-amber-300">
+          🧹 清理临时文件
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="text-center text-gray-400 py-8">加载中...</div>
@@ -77,6 +83,13 @@
       @confirm="doDelete"
       @cancel="showDeleteDialog = false"
     />
+    <ConfirmDialog
+      :visible="showClearUploadsDialog"
+      title="清理临时文件"
+      message="将清理服务器 uploads 目录中的临时上传文件，不会删除报价历史记录。确定继续吗？"
+      @confirm="clearUploads"
+      @cancel="showClearUploadsDialog = false"
+    />
   </div>
 </template>
 
@@ -95,6 +108,7 @@ const expandedId = ref(null)
 // 删除确认弹窗
 const showDeleteDialog = ref(false)
 const pendingDeleteId = ref(null)
+const showClearUploadsDialog = ref(false)
 
 async function refresh() {
   loading.value = true
@@ -140,6 +154,14 @@ async function doDelete() {
     alert('删除失败：' + res.message)
   }
   pendingDeleteId.value = null
+}
+
+async function clearUploads() {
+  showClearUploadsDialog.value = false
+  const res = await API.clearUploadFiles()
+  if (!res.success) {
+    alert('清理临时文件失败：' + (res.message || '未知错误'))
+  }
 }
 
 onMounted(refresh)

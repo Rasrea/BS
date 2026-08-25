@@ -81,6 +81,15 @@ export const API = {
   },
 
   // === 效果图识别 (接口2) ===
+  async cleanupMeasurement(drawingId, sourceFormat = 'dxf') {
+    try {
+      const { data } = await api.post(`/measurement/${drawingId}/cleanup`, null, {
+        params: { source_format: sourceFormat },
+        timeout: 30000,
+      })
+      return data
+    } catch (e) { return handleError(e) }
+  },
   async analyzeImage(file, { model = '', cropEnabled = true, fullEnabled = false, drawingId = 0, fileCount = 1, batchId = null } = {}) {
     const fd = new FormData()
     fd.append('image_file', file)
@@ -222,6 +231,10 @@ export const API = {
   },
   async deleteHistory(quoteId) {
     try { const { data } = await api.delete(`/history/${quoteId}`); return data }
+    catch (e) { return handleError(e) }
+  },
+  async clearUploadFiles() {
+    try { const { data } = await api.post('/upload/clear', {}, { timeout: 30000 }); return data }
     catch (e) { return handleError(e) }
   },
 

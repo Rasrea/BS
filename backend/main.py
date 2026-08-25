@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────── App ───────────────────
 
-app = FastAPI(title="家装智能自动报价系统", version="2.1.0")
+app = FastAPI(title="家装智能自动报价系统", version="2.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -480,14 +480,14 @@ async def get_system_status():
     try:
         import requests
         ollama_resp = requests.get("http://localhost:11434/api/tags", timeout=3)
-        llava_ok = ollama_resp.status_code == 200 and ("llava" in ollama_resp.text.lower() or "llama" in ollama_resp.text.lower())
+        qwen_ok = ollama_resp.status_code == 200 and "qwen" in ollama_resp.text.lower()
     except Exception:
-        llava_ok = False
+        qwen_ok = False
 
     return ok({
         "task_state": task_state.state,
         "trace_id": task_state.trace_id,
-        "llava_available": llava_ok,
+        "qwen_available": qwen_ok,
         "db_path": str(db.db_path),
         "db_connected": db._conn is not None,
         "upload_dir": str(UPLOAD_DIR),
@@ -502,16 +502,16 @@ async def get_health():
     # 数据库
     if not db._conn:
         issues.append("数据库未连接")
-    # LLaVA
+    # Qwen
     try:
         import requests
         r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        llava_ok = r.status_code == 200
-        if not llava_ok:
-            issues.append("LLaVA模型不可用")
+        qwen_ok = r.status_code == 200 and "qwen" in r.text.lower()
+        if not qwen_ok:
+            issues.append("Qwen模型不可用")
     except Exception:
-        llava_ok = False
-        issues.append("LLaVA模型服务未响应")
+        qwen_ok = False
+        issues.append("Qwen模型服务未响应")
     # 文件服务
     upload_ok = UPLOAD_DIR.exists()
     if not upload_ok:
@@ -524,7 +524,7 @@ async def get_health():
 
     return ok({
         "status": "healthy" if not issues else "degraded",
-        "llava": llava_ok,
+        "qwen": qwen_ok,
         "db": db._conn is not None,
         "upload_dir": upload_ok,
         "free_disk_gb": round(free_gb, 1),
@@ -609,6 +609,19 @@ async def prepare_manual_measurement(source_file: UploadFile = File(...)):
 @app.post("/api/dxf/measurement/prepare", deprecated=True)
 async def prepare_dxf_measurement(dxf_file: UploadFile = File(...)):
     return await prepare_measurement_file(dxf_file)
+
+
+@app.post("/api/measurement/{drawing_id}/cleanup")
+async def cleanup_measurement(drawing_id: str, source_format: str = Query("dxf")):
+    """Remove temporary files belonging to one manual-measurement drawing."""
+    capability = annotation_capability(source_format)
+    cleanup_measurement_work_files(drawing_id, capability["format"])
+    return ok({"drawing_id": drawing_id, "source_format": capability["format"]})
+
+
+@app.post("/api/dxf/measurement/{drawing_id}/cleanup", deprecated=True)
+async def cleanup_dxf_measurement(drawing_id: str, source_format: str = Query("dxf")):
+    return await cleanup_measurement(drawing_id, source_format)
 
 
 async def load_measurement_view(drawing_id: str, view_id: str):
@@ -3591,12 +3604,12 @@ async def get_config():
     try:
         import requests
         r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        ollama_ok = r.status_code == 200 and "llava" in r.text.lower()
+        ollama_ok = r.status_code == 200 and "qwen" in r.text.lower()
     except Exception:
         ollama_ok = False
     return {
-        "vl_engine": "Ollama/LLaVA-7B 本地模型",
-        "llava_available": ollama_ok,
+        "vl_engine": "Ollama/Qwen 视觉模型",
+        "qwen_available": ollama_ok,
         "supported_cad_formats": [".dxf", ".dwg"],
         "supported_image_formats": [".jpg", ".jpeg", ".png", ".webp"],
     }

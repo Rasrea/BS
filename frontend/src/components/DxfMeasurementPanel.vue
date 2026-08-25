@@ -16,7 +16,7 @@ const props = defineProps({
   reviewReason: { type: String, default: '' },
   embedded: { type: Boolean, default: false },
 })
-const emit = defineEmits(['close', 'saved'])
+const emit = defineEmits(['close', 'saved', 'prepared'])
 
 const svgRef = ref(null)
 const file = ref(null)
@@ -472,6 +472,7 @@ async function loadMeasurementFile(selected, initialSpaces = [], reviewReason = 
     return
   }
   drawing.value = response.data
+  emit('prepared', drawing.value.drawing_id)
   rooms.value = initialSpaces
     .filter(space => Array.isArray(space.vertices) && space.vertices.length >= 3)
     .map((space, index) => ({
