@@ -309,6 +309,7 @@
           :initial-spaces="currentSavedMeasurementResult?.spaces || emptyInitialSpaces"
           :review-reason="cadResult?.data?.manual_review_reason || ''"
           @close="closeCadPreview"
+          @prepared="onMeasurementPrepared"
           @saved="onMeasurementSaved"
         />
         <CadViewer v-else ref="cadViewerRef" :file="cadPreviewFile" @close="closeCadPreview" />
@@ -345,7 +346,7 @@
     <!-- Footer -->
     <footer class="mt-8 py-4 border-t border-gray-200">
       <div class="max-w-7xl mx-auto px-4 text-center text-xs text-gray-400">
-        家装智能自动报价系统 · Demo v2.1 · 后端状态: {{ sysStatusText }}
+        家装智能自动报价系统 · v2.5 · 后端状态: {{ sysStatusText }}
       </div>
     </footer>
   </div>
@@ -424,6 +425,7 @@ provide('refreshKey', refreshKey)
 // 当前业务图纸 ID，只服务于“图纸分析/融合报价 → 效果图上传”的归属链路。
 // 它不改数据库结构，也不影响识别测试、PDF、历史报价等其它模块。
 const activeDrawingId = ref(0)
+const activeMeasurementId = ref('')
 provide('activeDrawingId', activeDrawingId)
 
 // 本次页面会话上传成功的效果图识别结果 ID。
@@ -605,12 +607,12 @@ const statusText = computed(() => {
 const sysStatusText = computed(() => {
   if (!sysStatus.value) return '未知'
   const t = sysStatus.value
-  return `${t.task_state} | LLaVA: ${t.llava_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
+  return `${t.task_state} | Qwen: ${t.qwen_available ? '✓' : '✗'} | DB: ${t.db_connected ? '✓' : '✗'}`
 })
 
-// 通知后端清理当前会话产生的上传临时文件；失败不打断用户操作。
-async function clearServerUploadsQuietly() {
-  try { await API.post('/upload/clear', {}) } catch (e) {}
+async function clearMeasurementQuietly(drawingId = activeMeasurementId.value) {
+  if (!drawingId) return
+  try { await API.cleanupMeasurement(drawingId) } catch (e) {}
 }
 
 async function clearCurrentFusionDataQuietly() {
@@ -619,19 +621,19 @@ async function clearCurrentFusionDataQuietly() {
 
 async function onCadFileChange(f) {
   if (cadFile.value && cadFile.value !== f) {
-    await clearServerUploadsQuietly()
+    await clearMeasurementQuietly()
     await clearCurrentFusionDataQuietly()
   }
   cadFile.value = f
   cadDone.value = !!f
   cadResult.value = null
   activeDrawingId.value = 0
+  activeMeasurementId.value = ''
   latestImageResultIds.value = []
   clearSavedMeasurementResult()
   analysisDone.value = false
 }
 async function onImageFileChange(f) {
-  if (imageFile.value && imageFile.value !== f) await clearServerUploadsQuietly()
   showImagePreview.value = false
   imageFile.value = f
   imgDone.value = !!f
@@ -676,7 +678,7 @@ function onQueueProgressUpdate(progress) {
 async function clearFiles() {
   // 后端同步删除临时文件
   try {
-    await clearServerUploadsQuietly()
+    await clearMeasurementQuietly()
     await clearCurrentFusionDataQuietly()
   } catch (e) { /* 静默处理 */ }
   cadFile.value = null
@@ -684,6 +686,7 @@ async function clearFiles() {
   cadResult.value = null
   imageResult.value = null
   activeDrawingId.value = 0
+  activeMeasurementId.value = ''
   imageQueueRef.value?.clearAll?.()
   queuePendingCount.value = 0
   queueProgress.value = { running: false, finished: 0, total: 0, currentName: '', error: '' }
@@ -714,13 +717,18 @@ async function closeCadPreview() {
   // 先显式销毁引擎，再隐藏 overlay
   try { cadViewerRef.value?.cleanup?.() } catch (e) {}
   if (cadMeasurementPreviewFile.value) {
-    await clearServerUploadsQuietly()
+    await clearMeasurementQuietly()
   }
   // 未保存就关闭人工标注时，清掉挂起回调，避免后续保存结果串到旧测试文件。
   pendingCadCallback.value = null
   showCadPreview.value = false
   cadPreviewFile.value = null
   cadMeasurementPreviewFile.value = null
+  activeMeasurementId.value = ''
+}
+
+function onMeasurementPrepared(drawingId) {
+  activeMeasurementId.value = drawingId || ''
 }
 
 
