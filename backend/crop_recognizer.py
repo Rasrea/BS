@@ -113,6 +113,7 @@ class CropRecognizer:
         crops["full"] = full_img_b64
 
         # ====== 步骤2：保存裁剪图片（调试用）=====
+        # dog laoshi, dog bisai
         # crop_paths, crop_debug_dir = "", ""
         # t_save = time.time()
         # crop_paths, crop_debug_dir = self.save_crop_images(
