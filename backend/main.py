@@ -1457,15 +1457,20 @@ async def _build_fusion_quote(cad_rows, image_rows, bindings, trace_extra=None, 
         material = match_data.get("materials", {})
         source_label = {"ai": "AI材质", "manual": "人工标注"}.get(source, "默认计价")
         source_note = {"ai": "自动匹配当前批次效果图", "manual": "使用人工标注材质"}.get(source, "未匹配当前批次效果图材质，使用默认材质")
-        wall_mat_name = str(material.get("wall") or material.get("墙面材质") or "乳胶漆")
-        floor_mat_name = str(material.get("floor") or material.get("地面材质") or "地砖")
-        ceiling_mat_name = str(material.get("ceiling") or material.get("顶面材质") or "石膏板吊顶")
+        # 取各层原始识别值，空字符串表示未识别，不填充默认材质
+        wall_mat_name = material.get("wall") or material.get("墙面材质") or ""
+        floor_mat_name = material.get("floor") or material.get("地面材质") or ""
+        ceiling_mat_name = material.get("ceiling") or material.get("顶面材质") or ""
         ceiling_area = space_area * 0.8  # 吊顶面积 = 地面面积 × 0.8
-        for category, material_name, quantity, default_material, default_labor, suffix in [
-            ("墙面工程", wall_mat_name, wall_area, 18, 22, "墙面"),
-            ("地面工程", floor_mat_name, space_area, 45, 35, "铺贴"),
-            ("吊顶工程", ceiling_mat_name, ceiling_area, 60, 35, "吊顶"),
-        ]:
+        # 只生成已识别层面的报价项，未识别层面不填充默认值
+        surfaces_to_process = []
+        if wall_mat_name:
+            surfaces_to_process.append(("墙面工程", wall_mat_name, wall_area, 18, 22, "墙面"))
+        if floor_mat_name:
+            surfaces_to_process.append(("地面工程", floor_mat_name, space_area, 45, 35, "铺贴"))
+        if ceiling_mat_name:
+            surfaces_to_process.append(("吊顶工程", ceiling_mat_name, ceiling_area, 60, 35, "吊顶"))
+        for category, material_name, quantity, default_material, default_labor, suffix in surfaces_to_process:
             price_match = _auto_match_price(category, material_name)
             material_price = price_match["material"] if price_match else default_material
             labor_price = price_match["labor"] if price_match else default_labor
